@@ -1,7 +1,15 @@
 'use client';
 import { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  onAuthStateChanged, signInWithEmailAndPassword,
+  createUserWithEmailAndPassword, signOut, type User,
+} from 'firebase/auth';
+import { auth } from '@/lib/firebase';
+import {
+  getMeetingsCloud, saveMeetingCloud, deleteMeetingCloud,
+  updateMeetingSiteCloud, renameSiteCloud,
+} from '@/lib/cloudStorage';
 import type { Meeting, MeetingSummary, TranscriptEntry } from '@/types/meeting';
-import { saveMeeting, getMeetings, deleteMeeting, updateMeetingSite, renameSite } from '@/lib/storage';
 import { summarizeMeeting } from '@/lib/gemini';
 import { generateDocx } from '@/lib/docxGenerator';
 
@@ -44,38 +52,153 @@ function WaveBars({ active }: { active: boolean }) {
   );
 }
 
+// ── 로그인 / 회원가입 화면 ──────────────────────────────────
+function AuthScreen() {
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    setError(''); setLoading(true);
+    try {
+      if (mode === 'signup') {
+        await createUserWithEmailAndPassword(auth, email, password);
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    } catch (e: unknown) {
+      const code = (e as { code?: string }).code ?? '';
+      if (code === 'auth/email-already-in-use') setError('이미 사용 중인 이메일입니다.');
+      else if (code === 'auth/weak-password')   setError('비밀번호는 6자 이상이어야 합니다.');
+      else if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found')
+        setError('이메일 또는 비밀번호가 올바르지 않습니다.');
+      else setError('오류가 발생했습니다. 다시 시도해 주세요.');
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-5">
+      <div className="w-full max-w-sm">
+        <div className="flex items-center gap-3 mb-8 justify-center">
+          <div className="w-12 h-12 bg-indigo-600 rounded-3xl flex items-center justify-center shadow-lg shadow-indigo-200">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">회의록</h1>
+        </div>
+
+        <div className="bg-white rounded-3xl p-6 shadow-sm border border-gray-100">
+          <div className="flex gap-1 bg-gray-100 rounded-2xl p-1 mb-6">
+            {(['login', 'signup'] as const).map(m => (
+              <button key={m} onClick={() => { setMode(m); setError(''); }}
+                className={`flex-1 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+                  mode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                }`}>
+                {m === 'login' ? '로그인' : '회원가입'}
+              </button>
+            ))}
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">이메일</label>
+              <input
+                type="email" value={email} onChange={e => setEmail(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                placeholder="example@email.com"
+                className="w-full bg-gray-50 rounded-2xl px-4 py-3.5 text-gray-900 placeholder-gray-400 text-sm outline-none focus:ring-2 focus:ring-indigo-400 transition-all"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">비밀번호</label>
+              <input
+                type="password" value={password} onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                placeholder={mode === 'signup' ? '6자 이상' : '비밀번호 입력'}
+                className="w-full bg-gray-50 rounded-2xl px-4 py-3.5 text-gray-900 placeholder-gray-400 text-sm outline-none focus:ring-2 focus:ring-indigo-400 transition-all"
+              />
+            </div>
+
+            {error && (
+              <p className="text-red-500 text-sm bg-red-50 rounded-2xl px-4 py-3">{error}</p>
+            )}
+
+            <button onClick={handleSubmit} disabled={loading || !email || !password}
+              className="w-full py-4 rounded-3xl font-bold text-sm bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed transition-all text-white shadow-lg shadow-indigo-200 mt-2">
+              {loading ? '처리 중…' : mode === 'login' ? '로그인' : '회원가입'}
+            </button>
+          </div>
+        </div>
+
+        <p className="text-center text-xs text-gray-400 mt-5">
+          어떤 기기에서든 같은 계정으로 로그인하면<br/>회의록이 자동으로 동기화됩니다.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── 메인 앱 ────────────────────────────────────────────────
 export default function Home() {
-  const [tab, setTab] = useState<Tab>('new');
-  const [state, setState] = useState<AppState>('setup');
-  const [title, setTitle] = useState('');
-  const [siteName, setSiteName] = useState('');
+  const [user, setUser]               = useState<User | null>(null);
+  const [authReady, setAuthReady]     = useState(false);
+
+  const [tab, setTab]                 = useState<Tab>('new');
+  const [state, setState]             = useState<AppState>('setup');
+  const [title, setTitle]             = useState('');
+  const [siteName, setSiteName]       = useState('');
   const [participantInput, setParticipantInput] = useState('');
   const [participants, setParticipants] = useState<string[]>([]);
-  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
-  const [interim, setInterim] = useState('');
-  const [timer, setTimer] = useState(0);
-  const [meeting, setMeeting] = useState<Meeting | null>(null);
-  const [resultTab, setResultTab] = useState<'summary' | 'full'>('summary');
-  const [history, setHistory] = useState<Meeting[]>([]);
-  const [selected, setSelected] = useState<Meeting | null>(null);
+  const [transcript, setTranscript]   = useState<TranscriptEntry[]>([]);
+  const [interim, setInterim]         = useState('');
+  const [timer, setTimer]             = useState(0);
+  const [meeting, setMeeting]         = useState<Meeting | null>(null);
+  const [resultTab, setResultTab]     = useState<'summary' | 'full'>('summary');
+  const [history, setHistory]         = useState<Meeting[]>([]);
+  const [selected, setSelected]       = useState<Meeting | null>(null);
   const [selectedSite, setSelectedSite] = useState<string | null>(null);
   const [renamingSite, setRenamingSite] = useState<{ old: string; input: string } | null>(null);
-  const [movingSite, setMovingSite] = useState<{ id: string; input: string } | null>(null);
+  const [movingSite, setMovingSite]   = useState<{ id: string; input: string } | null>(null);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
-  const isRecRef = useRef(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const transcriptRef = useRef<TranscriptEntry[]>([]);
-  const timerValRef = useRef(0);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const recognitionRef  = useRef<any>(null);
+  const isRecRef        = useRef(false);
+  const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const transcriptRef   = useRef<TranscriptEntry[]>([]);
+  const timerValRef     = useRef(0);
+  const bottomRef       = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { setHistory(getMeetings()); }, []);
+  // 인증 상태 감지
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      setUser(u);
+      if (u) {
+        const meetings = await getMeetingsCloud(u.uid);
+        setHistory(meetings);
+      } else {
+        setHistory([]);
+      }
+      setAuthReady(true);
+    });
+    return unsub;
+  }, []);
+
   useEffect(() => {
     transcriptRef.current = transcript;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcript]);
   useEffect(() => { timerValRef.current = timer; }, [timer]);
+
+  const refreshHistory = useCallback(async () => {
+    if (!user) return;
+    setHistory(await getMeetingsCloud(user.uid));
+  }, [user]);
 
   const addParticipant = () => {
     const name = participantInput.trim();
@@ -127,6 +250,7 @@ export default function Home() {
   }, [title]);
 
   const endMeeting = useCallback(async () => {
+    if (!user) return;
     isRecRef.current = false;
     if (timerRef.current) clearInterval(timerRef.current);
     recognitionRef.current?.stop();
@@ -148,12 +272,12 @@ export default function Home() {
       id: Date.now().toString(), title: title.trim(), siteName: siteName.trim(),
       date: dateStr, participants, transcript: finalTranscript, summary, duration, createdAt: Date.now(),
     };
-    saveMeeting(m);
-    setHistory(getMeetings());
+    await saveMeetingCloud(user.uid, m);
+    await refreshHistory();
     setMeeting(m);
     setResultTab('summary');
     setState('done');
-  }, [title, participants]);
+  }, [title, participants, siteName, user, refreshHistory]);
 
   const downloadWord = async (m: Meeting) => {
     try {
@@ -166,18 +290,16 @@ export default function Home() {
   };
 
   const resetToSetup = () => {
-    setState('setup'); setTitle(''); setSiteName(''); setParticipants([]); setTranscript([]); setMeeting(null); setTimer(0);
+    setState('setup'); setTitle(''); setSiteName(''); setParticipants([]);
+    setTranscript([]); setMeeting(null); setTimer(0);
   };
 
   const usedSiteNames = [...new Set(history.map(m => m.siteName).filter(Boolean))];
-
-  const siteGroups = usedSiteNames.length > 0
-    ? usedSiteNames.map(site => ({
-        site,
-        meetings: history.filter(m => m.siteName === site),
-        lastDate: history.filter(m => m.siteName === site).sort((a, b) => b.createdAt - a.createdAt)[0]?.date ?? '',
-      })).sort((a, b) => b.meetings[0]?.createdAt - a.meetings[0]?.createdAt)
-    : [];
+  const siteGroups = usedSiteNames.map(site => ({
+    site,
+    meetings: history.filter(m => m.siteName === site),
+    lastDate: history.filter(m => m.siteName === site).sort((a, b) => b.createdAt - a.createdAt)[0]?.date ?? '',
+  })).sort((a, b) => b.meetings[0]?.createdAt - a.meetings[0]?.createdAt);
 
   const SummaryView = ({ m }: { m: Meeting }) => (
     <div className="space-y-3">
@@ -283,7 +405,12 @@ export default function Home() {
             새 회의
           </button>
         ) : (
-          <button onClick={() => { deleteMeeting(m.id); setHistory(getMeetings()); setSelected(null); }}
+          <button onClick={async () => {
+            if (!user) return;
+            await deleteMeetingCloud(user.uid, m.id);
+            await refreshHistory();
+            setSelected(null);
+          }}
             className="py-4 px-5 rounded-3xl font-bold text-sm bg-red-50 hover:bg-red-100 text-red-500 active:scale-[0.98] transition-all">
             삭제
           </button>
@@ -301,10 +428,10 @@ export default function Home() {
                 value={movingSite.input}
                 onChange={e => setMovingSite({ id: m.id, input: e.target.value })}
                 placeholder="현장명 입력 또는 선택"
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && movingSite.input.trim()) {
-                    updateMeetingSite(m.id, movingSite.input.trim());
-                    setHistory(getMeetings());
+                onKeyDown={async e => {
+                  if (e.key === 'Enter' && movingSite.input.trim() && user) {
+                    await updateMeetingSiteCloud(user.uid, m.id, movingSite.input.trim());
+                    await refreshHistory();
                     setMovingSite(null);
                     setSelected(null);
                     setSelectedSite(movingSite.input.trim());
@@ -319,10 +446,10 @@ export default function Home() {
               </datalist>
               <div className="flex gap-2">
                 <button
-                  onClick={() => {
-                    if (movingSite.input.trim()) {
-                      updateMeetingSite(m.id, movingSite.input.trim());
-                      setHistory(getMeetings());
+                  onClick={async () => {
+                    if (movingSite.input.trim() && user) {
+                      await updateMeetingSiteCloud(user.uid, m.id, movingSite.input.trim());
+                      await refreshHistory();
                       setMovingSite(null);
                       setSelected(null);
                       setSelectedSite(movingSite.input.trim());
@@ -351,6 +478,22 @@ export default function Home() {
     </>
   );
 
+  // 인증 초기화 전 로딩
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="relative w-16 h-16">
+          <div className="absolute inset-0 rounded-full border-4 border-indigo-100"/>
+          <div className="absolute inset-0 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin"/>
+        </div>
+      </div>
+    );
+  }
+
+  // 미로그인 → 로그인/회원가입 화면
+  if (!user) return <AuthScreen />;
+
+  // 로그인 완료 → 메인 앱
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-lg mx-auto min-h-screen flex flex-col">
@@ -366,7 +509,14 @@ export default function Home() {
                 <line x1="8" y1="23" x2="16" y2="23"/>
               </svg>
             </div>
-            <h1 className="text-xl font-bold text-gray-900">회의록</h1>
+            <h1 className="text-xl font-bold text-gray-900 flex-1">회의록</h1>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400 truncate max-w-[120px]">{user.email}</span>
+              <button onClick={() => signOut(auth)}
+                className="text-xs text-gray-400 hover:text-red-500 transition-colors px-2 py-1 rounded-xl hover:bg-red-50">
+                로그아웃
+              </button>
+            </div>
           </div>
           <div className="flex gap-1 bg-gray-200/70 rounded-2xl p-1">
             {(['new', 'history'] as Tab[]).map(t => (
@@ -385,7 +535,6 @@ export default function Home() {
           {/* ──── 새 회의 탭 ──── */}
           {tab === 'new' && (
             <>
-              {/* SETUP */}
               {state === 'setup' && (
                 <div className="pt-2 space-y-4">
                   <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-5">
@@ -449,7 +598,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* RECORDING */}
               {state === 'recording' && (
                 <div className="pt-2 space-y-3">
                   <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100">
@@ -495,7 +643,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* SUMMARIZING */}
               {state === 'summarizing' && (
                 <div className="flex flex-col items-center justify-center py-32 gap-6">
                   <div className="relative w-20 h-20">
@@ -510,7 +657,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* DONE */}
               {state === 'done' && meeting && (
                 <div className="pt-2">
                   <MeetingDetail m={meeting} isNew={true}/>
@@ -523,7 +669,6 @@ export default function Home() {
           {tab === 'history' && (
             <div className="pt-2">
               {selected ? (
-                /* 회의 상세 */
                 <>
                   <button onClick={() => setSelected(null)}
                     className="flex items-center gap-1.5 text-indigo-600 text-sm font-semibold mb-4 hover:opacity-70 transition-opacity">
@@ -535,7 +680,6 @@ export default function Home() {
                   <MeetingDetail m={selected} isNew={false}/>
                 </>
               ) : selectedSite !== null ? (
-                /* 현장별 회의 목록 */
                 <>
                   <button onClick={() => setSelectedSite(null)}
                     className="flex items-center gap-1.5 text-indigo-600 text-sm font-semibold mb-4 hover:opacity-70 transition-opacity">
@@ -583,7 +727,6 @@ export default function Home() {
                   </div>
                 </>
               ) : history.length === 0 ? (
-                /* 비어있음 */
                 <div className="flex flex-col items-center justify-center py-32 gap-3">
                   <div className="w-16 h-16 bg-gray-100 rounded-3xl flex items-center justify-center">
                     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -594,22 +737,20 @@ export default function Home() {
                   <p className="text-gray-400 text-sm">저장된 회의록이 없습니다</p>
                 </div>
               ) : (
-                /* 현장 목록 */
                 <div className="space-y-3">
                   {siteGroups.length > 0 ? siteGroups.map(({ site, meetings, lastDate }) => (
                     <div key={site}>
                       {renamingSite?.old === site ? (
-                        /* 현장명 변경 인라인 폼 */
                         <div className="bg-white rounded-3xl p-5 shadow-sm border border-indigo-200">
                           <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">현장명 변경</p>
                           <input
                             list="rename-site-list"
                             value={renamingSite.input}
                             onChange={e => setRenamingSite({ old: site, input: e.target.value })}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter' && renamingSite.input.trim()) {
-                                renameSite(site, renamingSite.input.trim());
-                                setHistory(getMeetings());
+                            onKeyDown={async e => {
+                              if (e.key === 'Enter' && renamingSite.input.trim() && user) {
+                                await renameSiteCloud(user.uid, site, renamingSite.input.trim(), history);
+                                await refreshHistory();
                                 setRenamingSite(null);
                               }
                               if (e.key === 'Escape') setRenamingSite(null);
@@ -623,10 +764,10 @@ export default function Home() {
                           <p className="text-xs text-gray-400 mb-3">다른 현장명 입력 시 해당 현장으로 회의가 통합됩니다.</p>
                           <div className="flex gap-2">
                             <button
-                              onClick={() => {
-                                if (renamingSite.input.trim()) {
-                                  renameSite(site, renamingSite.input.trim());
-                                  setHistory(getMeetings());
+                              onClick={async () => {
+                                if (renamingSite.input.trim() && user) {
+                                  await renameSiteCloud(user.uid, site, renamingSite.input.trim(), history);
+                                  await refreshHistory();
                                   setRenamingSite(null);
                                 }
                               }}
@@ -673,7 +814,6 @@ export default function Home() {
                       )}
                     </div>
                   )) : (
-                    /* 현장명 없는 구버전 회의록 */
                     <div className="space-y-3">
                       {history.map(m => (
                         <button key={m.id} onClick={() => { setSelected(m); setResultTab('summary'); }}
