@@ -13,6 +13,7 @@ export interface MeetingSummary {
 export interface Meeting {
   id: string;
   title: string;
+  siteName: string;
   date: string;
   participants: string[];
   transcript: TranscriptEntry[];

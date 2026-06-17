@@ -48,6 +48,7 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>('new');
   const [state, setState] = useState<AppState>('setup');
   const [title, setTitle] = useState('');
+  const [siteName, setSiteName] = useState('');
   const [participantInput, setParticipantInput] = useState('');
   const [participants, setParticipants] = useState<string[]>([]);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -57,6 +58,7 @@ export default function Home() {
   const [resultTab, setResultTab] = useState<'summary' | 'full'>('summary');
   const [history, setHistory] = useState<Meeting[]>([]);
   const [selected, setSelected] = useState<Meeting | null>(null);
+  const [selectedSite, setSelectedSite] = useState<string | null>(null);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
@@ -91,6 +93,7 @@ export default function Home() {
     setTranscript([]); setInterim(''); setTimer(0);
     isRecRef.current = true;
     setState('recording');
+
     timerRef.current = setInterval(() => setTimer(t => t + 1), 1000);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rec: any = new API();
@@ -140,8 +143,8 @@ export default function Home() {
       catch (e) { console.error('요약 실패:', e); }
     }
     const m: Meeting = {
-      id: Date.now().toString(), title: title.trim(), date: dateStr, participants,
-      transcript: finalTranscript, summary, duration, createdAt: Date.now(),
+      id: Date.now().toString(), title: title.trim(), siteName: siteName.trim(),
+      date: dateStr, participants, transcript: finalTranscript, summary, duration, createdAt: Date.now(),
     };
     saveMeeting(m);
     setHistory(getMeetings());
@@ -161,8 +164,18 @@ export default function Home() {
   };
 
   const resetToSetup = () => {
-    setState('setup'); setTitle(''); setParticipants([]); setTranscript([]); setMeeting(null); setTimer(0);
+    setState('setup'); setTitle(''); setSiteName(''); setParticipants([]); setTranscript([]); setMeeting(null); setTimer(0);
   };
+
+  const usedSiteNames = [...new Set(history.map(m => m.siteName).filter(Boolean))];
+
+  const siteGroups = usedSiteNames.length > 0
+    ? usedSiteNames.map(site => ({
+        site,
+        meetings: history.filter(m => m.siteName === site),
+        lastDate: history.filter(m => m.siteName === site).sort((a, b) => b.createdAt - a.createdAt)[0]?.date ?? '',
+      })).sort((a, b) => b.meetings[0]?.createdAt - a.meetings[0]?.createdAt)
+    : [];
 
   const SummaryView = ({ m }: { m: Meeting }) => (
     <div className="space-y-3">
@@ -316,6 +329,19 @@ export default function Home() {
                 <div className="pt-2 space-y-4">
                   <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-5">
                     <div>
+                      <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">현장명</label>
+                      <input
+                        list="site-names"
+                        value={siteName} onChange={e => setSiteName(e.target.value)}
+                        placeholder="예) 설계PT, 품평회, 견본주택PT"
+                        className="w-full bg-gray-50 rounded-2xl px-4 py-3.5 text-gray-900 placeholder-gray-400 text-sm outline-none focus:ring-2 focus:ring-indigo-400 transition-all"
+                      />
+                      <datalist id="site-names">
+                        {usedSiteNames.map(n => <option key={n} value={n}/>)}
+                      </datalist>
+                    </div>
+                    <div className="h-px bg-gray-100"/>
+                    <div>
                       <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">회의 제목 *</label>
                       <input
                         value={title} onChange={e => setTitle(e.target.value)}
@@ -436,17 +462,67 @@ export default function Home() {
           {tab === 'history' && (
             <div className="pt-2">
               {selected ? (
+                /* 회의 상세 */
                 <>
                   <button onClick={() => setSelected(null)}
                     className="flex items-center gap-1.5 text-indigo-600 text-sm font-semibold mb-4 hover:opacity-70 transition-opacity">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="15 18 9 12 15 6"/>
                     </svg>
-                    목록으로
+                    {selectedSite || '목록으로'}
                   </button>
                   <MeetingDetail m={selected} isNew={false}/>
                 </>
+              ) : selectedSite !== null ? (
+                /* 현장별 회의 목록 */
+                <>
+                  <button onClick={() => setSelectedSite(null)}
+                    className="flex items-center gap-1.5 text-indigo-600 text-sm font-semibold mb-4 hover:opacity-70 transition-opacity">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="15 18 9 12 15 6"/>
+                    </svg>
+                    전체 현장
+                  </button>
+                  <div className="bg-indigo-50 rounded-2xl px-4 py-2.5 mb-4 flex items-center gap-2">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+                    </svg>
+                    <span className="text-indigo-700 font-bold text-sm">{selectedSite}</span>
+                    <span className="text-indigo-400 text-xs ml-auto">{history.filter(m => m.siteName === selectedSite).length}개 회의</span>
+                  </div>
+                  <div className="space-y-3">
+                    {history.filter(m => m.siteName === selectedSite).sort((a, b) => b.createdAt - a.createdAt).map(m => (
+                      <button key={m.id} onClick={() => { setSelected(m); setResultTab('summary'); }}
+                        className="w-full bg-white rounded-3xl p-5 text-left shadow-sm border border-gray-100 hover:border-indigo-200 hover:shadow-md active:scale-[0.98] transition-all">
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="font-bold text-gray-900 text-sm leading-tight">{m.title}</p>
+                          <span className="text-xs text-gray-400 font-mono shrink-0 tabular-nums">{m.duration}</span>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1.5">{m.date}</p>
+                        {m.participants.length > 0 && (
+                          <div className="flex gap-1.5 mt-2 flex-wrap">
+                            {m.participants.map(p => (
+                              <span key={p} className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{p}</span>
+                            ))}
+                          </div>
+                        )}
+                        {m.summary && (
+                          <div className="flex gap-1.5 mt-3 flex-wrap">
+                            {(Object.keys(SUMMARY_META) as (keyof MeetingSummary)[])
+                              .filter(k => (m.summary![k] ?? []).length > 0)
+                              .map(k => (
+                                <span key={k} className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${SUMMARY_META[k].bg} ${SUMMARY_META[k].text}`}>
+                                  {SUMMARY_META[k].label} {(m.summary![k] ?? []).length}
+                                </span>
+                              ))}
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </>
               ) : history.length === 0 ? (
+                /* 비어있음 */
                 <div className="flex flex-col items-center justify-center py-32 gap-3">
                   <div className="w-16 h-16 bg-gray-100 rounded-3xl flex items-center justify-center">
                     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -457,35 +533,42 @@ export default function Home() {
                   <p className="text-gray-400 text-sm">저장된 회의록이 없습니다</p>
                 </div>
               ) : (
+                /* 현장 목록 */
                 <div className="space-y-3">
-                  {history.map(m => (
-                    <button key={m.id} onClick={() => { setSelected(m); setResultTab('summary'); }}
+                  {siteGroups.length > 0 ? siteGroups.map(({ site, meetings, lastDate }) => (
+                    <button key={site} onClick={() => setSelectedSite(site)}
                       className="w-full bg-white rounded-3xl p-5 text-left shadow-sm border border-gray-100 hover:border-indigo-200 hover:shadow-md active:scale-[0.98] transition-all">
-                      <div className="flex items-start justify-between gap-3">
-                        <p className="font-bold text-gray-900 text-sm leading-tight">{m.title}</p>
-                        <span className="text-xs text-gray-400 font-mono shrink-0 tabular-nums">{m.duration}</span>
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-indigo-50 rounded-2xl flex items-center justify-center shrink-0">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-gray-900 text-sm">{site}</p>
+                          <p className="text-xs text-gray-400 mt-0.5 truncate">{lastDate}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-lg font-bold text-indigo-600">{meetings.length}</p>
+                          <p className="text-xs text-gray-400">건</p>
+                        </div>
                       </div>
-                      <p className="text-xs text-gray-400 mt-1.5">{m.date}</p>
-                      {m.participants.length > 0 && (
-                        <div className="flex gap-1.5 mt-2 flex-wrap">
-                          {m.participants.map(p => (
-                            <span key={p} className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{p}</span>
-                          ))}
-                        </div>
-                      )}
-                      {m.summary && (
-                        <div className="flex gap-1.5 mt-3 flex-wrap">
-                          {(Object.keys(SUMMARY_META) as (keyof MeetingSummary)[])
-                            .filter(k => (m.summary![k] ?? []).length > 0)
-                            .map(k => (
-                              <span key={k} className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${SUMMARY_META[k].bg} ${SUMMARY_META[k].text}`}>
-                                {SUMMARY_META[k].label} {(m.summary![k] ?? []).length}
-                              </span>
-                            ))}
-                        </div>
-                      )}
                     </button>
-                  ))}
+                  )) : (
+                    /* 현장명 없는 구버전 회의록 */
+                    <div className="space-y-3">
+                      {history.map(m => (
+                        <button key={m.id} onClick={() => { setSelected(m); setResultTab('summary'); }}
+                          className="w-full bg-white rounded-3xl p-5 text-left shadow-sm border border-gray-100 hover:border-indigo-200 hover:shadow-md active:scale-[0.98] transition-all">
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="font-bold text-gray-900 text-sm leading-tight">{m.title}</p>
+                            <span className="text-xs text-gray-400 font-mono shrink-0 tabular-nums">{m.duration}</span>
+                          </div>
+                          <p className="text-xs text-gray-400 mt-1.5">{m.date}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

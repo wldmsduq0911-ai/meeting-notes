@@ -15,6 +15,9 @@ export async function generateDocx(meeting: Meeting): Promise<Blob> {
       alignment: AlignmentType.CENTER,
     }),
     new Paragraph({
+      children: [new TextRun({ text: `현장명: ${meeting.siteName || '미입력'}`, size: 22 })],
+    }),
+    new Paragraph({
       children: [new TextRun({ text: `일시: ${meeting.date}`, size: 22 })],
     }),
     new Paragraph({
