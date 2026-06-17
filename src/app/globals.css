@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+
+/* 스크롤바 */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+/* 실시간 자막 깜빡임 효과 */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.pulse-dot { animation: pulse-dot 1s ease-in-out infinite; }

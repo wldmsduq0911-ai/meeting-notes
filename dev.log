@@ -1,0 +1,18 @@
+
+> meeting-notes@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.9 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.0.146:3000
+- Environments: .env.local
+✓ Ready in 774ms
+
+ GET / 200 in 3.0s (next.js: 2.7s, application-code: 303ms)
+ GET /icon-192.png 404 in 453ms (next.js: 395ms, application-code: 58ms)
+ GET / 200 in 75ms (next.js: 10ms, application-code: 65ms)
+ GET /icon-192.png 404 in 64ms (next.js: 10ms, application-code: 53ms)
+ GET / 200 in 130ms (next.js: 11ms, application-code: 119ms)
+ GET /icon-192.png 404 in 70ms (next.js: 14ms, application-code: 57ms)
+ GET / 200 in 49ms (next.js: 8ms, application-code: 41ms)
+ GET / 200 in 142ms (next.js: 11ms, application-code: 131ms)
