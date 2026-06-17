@@ -8,13 +8,13 @@ import { generateDocx } from '@/lib/docxGenerator';
 type AppState = 'setup' | 'recording' | 'summarizing' | 'done';
 type Tab = 'new' | 'history';
 
-const SUMMARY_LABELS: Record<keyof MeetingSummary, string> = {
-  주요논의: '📋 주요 논의',
-  결정사항: '✅ 결정 사항',
-  검토필요사항: '🔍 검토 필요 사항',
-  액션아이템: '⚡ 액션 아이템',
-};
 const SUMMARY_KEYS = ['주요논의', '결정사항', '검토필요사항', '액션아이템'] as const;
+const SUMMARY_META: Record<keyof MeetingSummary, { label: string; icon: string; bg: string; text: string; dot: string }> = {
+  주요논의:    { label: '주요 논의',   icon: '💬', bg: 'bg-blue-50',    text: 'text-blue-800',    dot: 'bg-blue-400'    },
+  결정사항:    { label: '결정 사항',   icon: '✅', bg: 'bg-emerald-50', text: 'text-emerald-800', dot: 'bg-emerald-400' },
+  검토필요사항: { label: '검토 필요', icon: '🔎', bg: 'bg-amber-50',   text: 'text-amber-800',   dot: 'bg-amber-400'   },
+  액션아이템:  { label: '액션 아이템', icon: '⚡', bg: 'bg-violet-50',  text: 'text-violet-800',  dot: 'bg-violet-400'  },
+};
 
 function fmt(sec: number) {
   const h = String(Math.floor(sec / 3600)).padStart(2, '0');
@@ -23,25 +23,38 @@ function fmt(sec: number) {
   return `${h}:${m}:${s}`;
 }
 
+function WaveBars({ active }: { active: boolean }) {
+  const heights = [35, 65, 45, 80, 50, 70, 30, 75, 55, 85, 40, 65, 50, 78, 35, 60, 45, 72, 38, 68];
+  return (
+    <div className="flex items-center gap-[3px]" style={{ height: 44 }}>
+      {heights.map((h, i) => (
+        <div
+          key={i}
+          className={`rounded-full transition-colors duration-500 ${active ? 'bg-indigo-500' : 'bg-gray-200'}`}
+          style={{
+            width: 3,
+            height: active ? `${h}%` : '14%',
+            animation: active
+              ? `wavePulse ${0.55 + (i % 5) * 0.12}s ease-in-out ${(i * 0.045).toFixed(2)}s infinite alternate`
+              : 'none',
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function Home() {
   const [tab, setTab] = useState<Tab>('new');
   const [state, setState] = useState<AppState>('setup');
-
-  // 설정
   const [title, setTitle] = useState('');
   const [participantInput, setParticipantInput] = useState('');
   const [participants, setParticipants] = useState<string[]>([]);
-
-  // 녹음
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [interim, setInterim] = useState('');
   const [timer, setTimer] = useState(0);
-
-  // 결과
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [resultTab, setResultTab] = useState<'summary' | 'full'>('summary');
-
-  // 히스토리
   const [history, setHistory] = useState<Meeting[]>([]);
   const [selected, setSelected] = useState<Meeting | null>(null);
 
@@ -54,15 +67,11 @@ export default function Home() {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { setHistory(getMeetings()); }, []);
-
   useEffect(() => {
     transcriptRef.current = transcript;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcript]);
-
-  useEffect(() => {
-    timerValRef.current = timer;
-  }, [timer]);
+  useEffect(() => { timerValRef.current = timer; }, [timer]);
 
   const addParticipant = () => {
     const name = participantInput.trim();
@@ -82,15 +91,12 @@ export default function Home() {
     setTranscript([]); setInterim(''); setTimer(0);
     isRecRef.current = true;
     setState('recording');
-
     timerRef.current = setInterval(() => setTimer(t => t + 1), 1000);
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rec: any = new API();
     rec.continuous = true;
     rec.interimResults = true;
     rec.lang = 'ko-KR';
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     rec.onresult = (e: any) => {
       let final = '', inter = '';
@@ -110,9 +116,7 @@ export default function Home() {
     };
     rec.onend = () => { if (isRecRef.current) { try { rec.start(); } catch {} } };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rec.onerror = (e: any) => {
-      if (e.error === 'no-speech' || e.error === 'aborted') return;
-    };
+    rec.onerror = (e: any) => { if (e.error === 'no-speech' || e.error === 'aborted') return; };
     rec.start();
     recognitionRef.current = rec;
   }, [title]);
@@ -123,33 +127,21 @@ export default function Home() {
     recognitionRef.current?.stop();
     setInterim('');
     setState('summarizing');
-
     const finalTranscript = [...transcriptRef.current];
     const duration = fmt(timerValRef.current);
     const now = new Date();
     const dateStr = now.toLocaleDateString('ko-KR', {
       year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
     }) + ' ' + now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
-
     let summary: MeetingSummary | null = null;
     const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
     if (finalTranscript.length > 0 && apiKey) {
-      try {
-        summary = await summarizeMeeting(finalTranscript, participants, apiKey);
-      } catch (e) {
-        console.error('요약 실패:', e);
-      }
+      try { summary = await summarizeMeeting(finalTranscript, participants, apiKey); }
+      catch (e) { console.error('요약 실패:', e); }
     }
-
     const m: Meeting = {
-      id: Date.now().toString(),
-      title: title.trim(),
-      date: dateStr,
-      participants,
-      transcript: finalTranscript,
-      summary,
-      duration,
-      createdAt: Date.now(),
+      id: Date.now().toString(), title: title.trim(), date: dateStr, participants,
+      transcript: finalTranscript, summary, duration, createdAt: Date.now(),
     };
     saveMeeting(m);
     setHistory(getMeetings());
@@ -163,13 +155,9 @@ export default function Home() {
       const blob = await generateDocx(m);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `${m.title}_${m.date}.docx`;
-      a.click();
+      a.href = url; a.download = `${m.title}_${m.date}.docx`; a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      alert('Word 파일 생성 중 오류가 발생했습니다.');
-    }
+    } catch { alert('Word 파일 생성 중 오류가 발생했습니다.'); }
   };
 
   const resetToSetup = () => {
@@ -177,301 +165,334 @@ export default function Home() {
   };
 
   const SummaryView = ({ m }: { m: Meeting }) => (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {m.summary ? (
         <>
-          <p className="text-xs text-amber-400 bg-amber-400/10 rounded-lg px-3 py-2">
-            ※ AI가 자동 생성한 요약입니다. 내용 누락·오류가 있을 수 있으니 원문을 함께 확인하세요.
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-2.5 leading-relaxed">
+            AI 자동 생성 요약입니다. 내용 누락·오류가 있을 수 있으니 원문을 함께 확인하세요.
           </p>
-          {SUMMARY_KEYS.map(key => (
-            <div key={key} className="bg-slate-800 rounded-xl p-4">
-              <h3 className="font-bold text-sm text-slate-300 mb-3">{SUMMARY_LABELS[key]}</h3>
-              {(m.summary![key] ?? []).length > 0 ? (
-                <ul className="space-y-1.5">
-                  {m.summary![key].map((item: string, i: number) => (
-                    <li key={i} className="text-sm text-white flex gap-2">
-                      <span className="text-blue-400 mt-0.5 shrink-0">•</span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-slate-500">없음</p>
-              )}
-            </div>
-          ))}
+          {SUMMARY_KEYS.map(key => {
+            const meta = SUMMARY_META[key];
+            const items = m.summary![key] ?? [];
+            return (
+              <div key={key} className={`${meta.bg} rounded-2xl p-4`}>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-base">{meta.icon}</span>
+                  <h3 className={`text-sm font-bold ${meta.text}`}>{meta.label}</h3>
+                </div>
+                {items.length > 0 ? (
+                  <ul className="space-y-2">
+                    {items.map((item: string, i: number) => (
+                      <li key={i} className="flex gap-2.5 text-sm text-gray-700">
+                        <span className={`w-1.5 h-1.5 rounded-full ${meta.dot} shrink-0 mt-1.5`}/>
+                        <span className="leading-relaxed">{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-gray-400">해당 없음</p>
+                )}
+              </div>
+            );
+          })}
         </>
       ) : (
-        <div className="bg-slate-800 rounded-xl p-6 text-center text-slate-400 text-sm">
-          {m.transcript.length === 0
-            ? '녹음된 내용이 없어 요약을 생성할 수 없습니다.'
-            : 'API 키가 설정되지 않았거나 요약 생성에 실패했습니다.'}
+        <div className="bg-gray-50 rounded-2xl p-10 text-center">
+          <p className="text-gray-400 text-sm">
+            {m.transcript.length === 0
+              ? '녹음된 내용이 없어 요약을 생성할 수 없습니다.'
+              : '요약 생성에 실패했습니다.'}
+          </p>
         </div>
       )}
     </div>
   );
 
   const FullTranscriptView = ({ m }: { m: Meeting }) => (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {m.transcript.length > 0 ? m.transcript.map((e, i) => (
-        <div key={i} className="flex gap-3 text-sm">
-          <span className="text-blue-400 shrink-0 font-mono text-xs mt-0.5">{e.time}</span>
-          <span className="text-slate-200">{e.text}</span>
+        <div key={i} className="flex gap-3">
+          <span className="text-indigo-400 text-xs font-mono shrink-0 mt-0.5 pt-px tabular-nums">{e.time}</span>
+          <span className="text-gray-700 text-sm leading-relaxed">{e.text}</span>
         </div>
       )) : (
-        <p className="text-slate-500 text-sm text-center py-8">녹음된 내용이 없습니다.</p>
+        <div className="py-12 text-center">
+          <p className="text-gray-400 text-sm">녹음된 내용이 없습니다.</p>
+        </div>
       )}
     </div>
   );
 
+  const MeetingDetail = ({ m, isNew }: { m: Meeting; isNew: boolean }) => (
+    <>
+      <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 mb-4">
+        <h2 className="font-bold text-gray-900 text-lg leading-tight">{m.title}</h2>
+        <p className="text-gray-400 text-xs mt-1">{m.date}</p>
+        <div className="flex gap-4 text-xs text-gray-400 mt-2.5">
+          <span className="flex items-center gap-1">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            {m.duration}
+          </span>
+          {m.participants.length > 0 && (
+            <span className="flex items-center gap-1">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              {m.participants.join(', ')}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="flex gap-1 bg-gray-100 rounded-2xl p-1 mb-4">
+        {(['summary', 'full'] as const).map(t => (
+          <button key={t} onClick={() => setResultTab(t)}
+            className={`flex-1 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+              resultTab === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+            }`}>
+            {t === 'summary' ? 'AI 요약' : '전체 내용'}
+          </button>
+        ))}
+      </div>
+
+      <div className="mb-4">
+        {resultTab === 'summary' ? <SummaryView m={m}/> : <FullTranscriptView m={m}/>}
+      </div>
+
+      <div className="flex gap-3">
+        <button onClick={() => downloadWord(m)}
+          className="flex-1 py-4 rounded-3xl font-bold text-sm bg-emerald-500 hover:bg-emerald-600 active:scale-[0.98] text-white shadow-lg shadow-emerald-100 transition-all">
+          Word 다운로드
+        </button>
+        {isNew ? (
+          <button onClick={resetToSetup}
+            className="flex-1 py-4 rounded-3xl font-bold text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 active:scale-[0.98] transition-all">
+            새 회의
+          </button>
+        ) : (
+          <button onClick={() => { deleteMeeting(m.id); setHistory(getMeetings()); setSelected(null); }}
+            className="py-4 px-5 rounded-3xl font-bold text-sm bg-red-50 hover:bg-red-100 text-red-500 active:scale-[0.98] transition-all">
+            삭제
+          </button>
+        )}
+      </div>
+    </>
+  );
+
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col max-w-2xl mx-auto">
-      {/* 헤더 */}
-      <header className="px-4 pt-safe pt-4 pb-2">
-        <div className="flex items-center gap-2 mb-4">
-          <span className="text-2xl">🎙</span>
-          <h1 className="text-lg font-bold text-white">회의록 자동 작성</h1>
-        </div>
-        <div className="flex gap-1 bg-slate-800 rounded-xl p-1">
-          {(['new', 'history'] as Tab[]).map(t => (
-            <button key={t} onClick={() => setTab(t)}
-              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-                tab === t ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}>
-              {t === 'new' ? '새 회의' : `히스토리 (${history.length})`}
-            </button>
-          ))}
-        </div>
-      </header>
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-lg mx-auto min-h-screen flex flex-col">
 
-      <main className="flex-1 overflow-y-auto px-4 pb-8">
-        {/* ──────── 새 회의 탭 ──────── */}
-        {tab === 'new' && (
-          <div className="mt-4 space-y-4">
+        {/* 헤더 */}
+        <header className="px-5 pt-6 pb-4 bg-gray-50 sticky top-0 z-10">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-9 h-9 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-md shadow-indigo-200 shrink-0">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+              </svg>
+            </div>
+            <h1 className="text-xl font-bold text-gray-900">회의록</h1>
+          </div>
+          <div className="flex gap-1 bg-gray-200/70 rounded-2xl p-1">
+            {(['new', 'history'] as Tab[]).map(t => (
+              <button key={t} onClick={() => setTab(t)}
+                className={`flex-1 py-2.5 text-sm font-semibold rounded-xl transition-all ${
+                  tab === t ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}>
+                {t === 'new' ? '새 회의' : `히스토리${history.length > 0 ? ` (${history.length})` : ''}`}
+              </button>
+            ))}
+          </div>
+        </header>
 
-            {/* SETUP */}
-            {state === 'setup' && (
-              <>
-                <div className="bg-slate-800 rounded-2xl p-5 space-y-4">
-                  <div>
-                    <label className="text-xs text-slate-400 mb-1.5 block">회의 제목 *</label>
-                    <input
-                      value={title} onChange={e => setTitle(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && startMeeting()}
-                      placeholder="예) 6월 주간 팀 회의"
-                      className="w-full bg-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-400 mb-1.5 block">참석자 (선택)</label>
-                    <div className="flex gap-2">
+        <main className="flex-1 overflow-y-auto px-5 pb-10">
+
+          {/* ──── 새 회의 탭 ──── */}
+          {tab === 'new' && (
+            <>
+              {/* SETUP */}
+              {state === 'setup' && (
+                <div className="pt-2 space-y-4">
+                  <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 space-y-5">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">회의 제목 *</label>
                       <input
-                        value={participantInput} onChange={e => setParticipantInput(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && addParticipant()}
-                        placeholder="이름 입력 후 추가"
-                        className="flex-1 bg-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        value={title} onChange={e => setTitle(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && startMeeting()}
+                        placeholder="예) 6월 주간 팀 회의"
+                        className="w-full bg-gray-50 rounded-2xl px-4 py-3.5 text-gray-900 placeholder-gray-400 text-sm outline-none focus:ring-2 focus:ring-indigo-400 transition-all"
                       />
-                      <button onClick={addParticipant}
-                        className="bg-slate-700 hover:bg-slate-600 px-4 py-3 rounded-xl text-sm text-white transition-colors">
-                        추가
-                      </button>
                     </div>
-                    {participants.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {participants.map(p => (
-                          <span key={p} className="flex items-center gap-1 bg-blue-600/20 text-blue-300 text-xs px-3 py-1.5 rounded-full">
-                            {p}
-                            <button onClick={() => setParticipants(ps => ps.filter(x => x !== p))} className="hover:text-white ml-1">×</button>
-                          </span>
+                    <div className="h-px bg-gray-100"/>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">
+                        참석자 <span className="font-normal normal-case">선택</span>
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          value={participantInput} onChange={e => setParticipantInput(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && addParticipant()}
+                          placeholder="이름 입력 후 추가"
+                          className="flex-1 bg-gray-50 rounded-2xl px-4 py-3 text-gray-900 placeholder-gray-400 text-sm outline-none focus:ring-2 focus:ring-indigo-400 transition-all"
+                        />
+                        <button onClick={addParticipant}
+                          className="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-semibold px-5 py-3 rounded-2xl text-sm transition-colors">
+                          추가
+                        </button>
+                      </div>
+                      {participants.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          {participants.map(p => (
+                            <span key={p} className="flex items-center gap-1.5 bg-indigo-50 text-indigo-700 text-xs font-semibold px-3 py-1.5 rounded-full">
+                              {p}
+                              <button onClick={() => setParticipants(ps => ps.filter(x => x !== p))}
+                                className="text-indigo-400 hover:text-indigo-700 text-sm font-bold leading-none">×</button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <button onClick={startMeeting} disabled={!title.trim()}
+                    className="w-full py-4 rounded-3xl font-bold text-base bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed transition-all text-white shadow-lg shadow-indigo-200">
+                    회의 시작
+                  </button>
+                </div>
+              )}
+
+              {/* RECORDING */}
+              {state === 'recording' && (
+                <div className="pt-2 space-y-3">
+                  <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"/>
+                        <span className="text-sm font-bold text-gray-700">녹음 중</span>
+                      </div>
+                      <span className="font-mono text-2xl font-bold text-gray-900 tabular-nums">{fmt(timer)}</span>
+                    </div>
+                    <WaveBars active={true}/>
+                    <p className="text-sm font-medium text-gray-400 mt-3 truncate">{title}</p>
+                  </div>
+
+                  <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 min-h-60 max-h-72 overflow-y-auto">
+                    {transcript.length === 0 && !interim ? (
+                      <div className="flex items-center justify-center h-48">
+                        <p className="text-gray-400 text-sm">발화를 시작하면 자막이 표시됩니다</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {transcript.map((e, i) => (
+                          <div key={i} className="flex gap-3">
+                            <span className="text-indigo-400 text-xs font-mono shrink-0 mt-0.5 tabular-nums">{e.time}</span>
+                            <span className="text-gray-700 text-sm leading-relaxed">{e.text}</span>
+                          </div>
                         ))}
+                        {interim && (
+                          <div className="flex gap-3 opacity-40">
+                            <span className="text-indigo-300 text-xs font-mono shrink-0 mt-0.5">…</span>
+                            <span className="text-gray-500 text-sm italic leading-relaxed">{interim}</span>
+                          </div>
+                        )}
+                        <div ref={bottomRef}/>
                       </div>
                     )}
                   </div>
-                </div>
-                <button onClick={startMeeting} disabled={!title.trim()}
-                  className="w-full py-4 rounded-2xl font-bold text-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed transition-all text-white">
-                  🎙 회의 시작
-                </button>
-              </>
-            )}
 
-            {/* RECORDING */}
-            {state === 'recording' && (
-              <>
-                {/* 상태 바 */}
-                <div className="bg-slate-800 rounded-2xl p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="pulse-dot w-3 h-3 rounded-full bg-red-500 inline-block"/>
-                    <span className="text-sm text-slate-300">녹음 중</span>
+                  <button onClick={endMeeting}
+                    className="w-full py-4 rounded-3xl font-bold text-base bg-red-500 hover:bg-red-600 active:scale-[0.98] text-white shadow-lg shadow-red-100 transition-all">
+                    회의 종료
+                  </button>
+                </div>
+              )}
+
+              {/* SUMMARIZING */}
+              {state === 'summarizing' && (
+                <div className="flex flex-col items-center justify-center py-32 gap-6">
+                  <div className="relative w-20 h-20">
+                    <div className="absolute inset-0 rounded-full border-4 border-indigo-100"/>
+                    <div className="absolute inset-0 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin"/>
+                    <div className="absolute inset-0 flex items-center justify-center text-xl">✨</div>
                   </div>
-                  <span className="font-mono text-xl font-bold text-white">{fmt(timer)}</span>
-                </div>
-
-                {/* 회의 정보 */}
-                <div className="bg-slate-800/60 rounded-xl px-4 py-2.5 flex items-center gap-3 text-sm">
-                  <span className="text-slate-400">📝</span>
-                  <span className="text-white font-medium truncate">{title}</span>
-                  {participants.length > 0 && (
-                    <span className="text-slate-500 shrink-0">| {participants.join(', ')}</span>
-                  )}
-                </div>
-
-                {/* 실시간 자막 */}
-                <div className="bg-slate-800 rounded-2xl p-4 h-80 overflow-y-auto space-y-2">
-                  {transcript.length === 0 && !interim && (
-                    <p className="text-slate-500 text-sm text-center mt-10">발화를 시작하면 자막이 표시됩니다...</p>
-                  )}
-                  {transcript.map((e, i) => (
-                    <div key={i} className="flex gap-3 text-sm">
-                      <span className="text-blue-400 shrink-0 font-mono text-xs mt-0.5">{e.time}</span>
-                      <span className="text-slate-200">{e.text}</span>
-                    </div>
-                  ))}
-                  {interim && (
-                    <div className="flex gap-3 text-sm opacity-50">
-                      <span className="text-blue-400 shrink-0 font-mono text-xs mt-0.5">…</span>
-                      <span className="text-slate-300 italic">{interim}</span>
-                    </div>
-                  )}
-                  <div ref={bottomRef}/>
-                </div>
-
-                <button onClick={endMeeting}
-                  className="w-full py-4 rounded-2xl font-bold text-lg bg-red-600 hover:bg-red-500 transition-all text-white">
-                  ⏹ 회의 종료
-                </button>
-              </>
-            )}
-
-            {/* SUMMARIZING */}
-            {state === 'summarizing' && (
-              <div className="flex flex-col items-center justify-center py-24 gap-4">
-                <div className="w-16 h-16 rounded-full border-4 border-blue-500 border-t-transparent animate-spin"/>
-                <p className="text-slate-300 text-lg font-medium">AI 요약 생성 중...</p>
-                <p className="text-slate-500 text-sm">잠시만 기다려주세요</p>
-              </div>
-            )}
-
-            {/* DONE */}
-            {state === 'done' && meeting && (
-              <>
-                {/* 회의 정보 헤더 */}
-                <div className="bg-slate-800 rounded-2xl p-4 space-y-1">
-                  <h2 className="font-bold text-white text-lg">{meeting.title}</h2>
-                  <p className="text-slate-400 text-sm">{meeting.date}</p>
-                  <div className="flex gap-4 text-xs text-slate-500 mt-1">
-                    <span>⏱ {meeting.duration}</span>
-                    {meeting.participants.length > 0 && <span>👥 {meeting.participants.join(', ')}</span>}
+                  <div className="text-center">
+                    <p className="text-gray-900 text-lg font-bold mb-1">AI 요약 생성 중</p>
+                    <p className="text-gray-400 text-sm">잠시만 기다려 주세요</p>
                   </div>
                 </div>
+              )}
 
-                {/* 탭 */}
-                <div className="flex gap-1 bg-slate-800 rounded-xl p-1">
-                  {(['summary', 'full'] as const).map(t => (
-                    <button key={t} onClick={() => setResultTab(t)}
-                      className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-                        resultTab === t ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-                      }`}>
-                      {t === 'summary' ? '📋 요약본' : '📄 전체 내용'}
-                    </button>
-                  ))}
+              {/* DONE */}
+              {state === 'done' && meeting && (
+                <div className="pt-2">
+                  <MeetingDetail m={meeting} isNew={true}/>
                 </div>
+              )}
+            </>
+          )}
 
-                <div className="bg-slate-800/50 rounded-2xl p-4">
-                  {resultTab === 'summary' ? <SummaryView m={meeting}/> : <FullTranscriptView m={meeting}/>}
-                </div>
-
-                {/* 액션 버튼 */}
-                <div className="flex gap-3">
-                  <button onClick={() => downloadWord(meeting)}
-                    className="flex-1 py-3.5 rounded-2xl font-bold bg-green-700 hover:bg-green-600 transition-all text-white text-sm">
-                    📥 Word 다운로드
+          {/* ──── 히스토리 탭 ──── */}
+          {tab === 'history' && (
+            <div className="pt-2">
+              {selected ? (
+                <>
+                  <button onClick={() => setSelected(null)}
+                    className="flex items-center gap-1.5 text-indigo-600 text-sm font-semibold mb-4 hover:opacity-70 transition-opacity">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="15 18 9 12 15 6"/>
+                    </svg>
+                    목록으로
                   </button>
-                  <button onClick={resetToSetup}
-                    className="flex-1 py-3.5 rounded-2xl font-bold bg-slate-700 hover:bg-slate-600 transition-all text-white text-sm">
-                    🎙 새 회의
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ──────── 히스토리 탭 ──────── */}
-        {tab === 'history' && (
-          <div className="mt-4">
-            {selected ? (
-              /* 상세 보기 */
-              <>
-                <button onClick={() => setSelected(null)}
-                  className="flex items-center gap-2 text-slate-400 hover:text-white text-sm mb-4 transition-colors">
-                  ← 목록으로
-                </button>
-                <div className="bg-slate-800 rounded-2xl p-4 mb-4 space-y-1">
-                  <h2 className="font-bold text-white text-lg">{selected.title}</h2>
-                  <p className="text-slate-400 text-sm">{selected.date}</p>
-                  <div className="flex gap-4 text-xs text-slate-500">
-                    <span>⏱ {selected.duration}</span>
-                    {selected.participants.length > 0 && <span>👥 {selected.participants.join(', ')}</span>}
+                  <MeetingDetail m={selected} isNew={false}/>
+                </>
+              ) : history.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-32 gap-3">
+                  <div className="w-16 h-16 bg-gray-100 rounded-3xl flex items-center justify-center">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                    </svg>
                   </div>
-                </div>
-                <div className="flex gap-1 bg-slate-800 rounded-xl p-1 mb-4">
-                  {(['summary', 'full'] as const).map(t => (
-                    <button key={t} onClick={() => setResultTab(t)}
-                      className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
-                        resultTab === t ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-                      }`}>
-                      {t === 'summary' ? '📋 요약본' : '📄 전체 내용'}
-                    </button>
-                  ))}
-                </div>
-                <div className="bg-slate-800/50 rounded-2xl p-4 mb-4">
-                  {resultTab === 'summary' ? <SummaryView m={selected}/> : <FullTranscriptView m={selected}/>}
-                </div>
-                <div className="flex gap-3">
-                  <button onClick={() => downloadWord(selected)}
-                    className="flex-1 py-3.5 rounded-2xl font-bold bg-green-700 hover:bg-green-600 text-white text-sm transition-all">
-                    📥 Word 다운로드
-                  </button>
-                  <button onClick={() => { deleteMeeting(selected.id); setHistory(getMeetings()); setSelected(null); }}
-                    className="py-3.5 px-5 rounded-2xl font-bold bg-red-900/60 hover:bg-red-800 text-red-300 text-sm transition-all">
-                    삭제
-                  </button>
-                </div>
-              </>
-            ) : (
-              /* 목록 */
-              history.length === 0 ? (
-                <div className="text-center py-24 text-slate-500">
-                  <p className="text-4xl mb-3">📂</p>
-                  <p>저장된 회의록이 없습니다.</p>
+                  <p className="text-gray-400 text-sm">저장된 회의록이 없습니다</p>
                 </div>
               ) : (
                 <div className="space-y-3">
                   {history.map(m => (
                     <button key={m.id} onClick={() => { setSelected(m); setResultTab('summary'); }}
-                      className="w-full bg-slate-800 hover:bg-slate-700 rounded-2xl p-4 text-left transition-colors">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="font-semibold text-white text-sm leading-tight">{m.title}</p>
-                        <span className="text-xs text-slate-500 shrink-0 font-mono">{m.duration}</span>
+                      className="w-full bg-white rounded-3xl p-5 text-left shadow-sm border border-gray-100 hover:border-indigo-200 hover:shadow-md active:scale-[0.98] transition-all">
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="font-bold text-gray-900 text-sm leading-tight">{m.title}</p>
+                        <span className="text-xs text-gray-400 font-mono shrink-0 tabular-nums">{m.duration}</span>
                       </div>
-                      <p className="text-xs text-slate-400 mt-1">{m.date}</p>
+                      <p className="text-xs text-gray-400 mt-1.5">{m.date}</p>
                       {m.participants.length > 0 && (
-                        <p className="text-xs text-slate-500 mt-0.5">👥 {m.participants.join(', ')}</p>
+                        <div className="flex gap-1.5 mt-2 flex-wrap">
+                          {m.participants.map(p => (
+                            <span key={p} className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{p}</span>
+                          ))}
+                        </div>
                       )}
                       {m.summary && (
-                        <p className="text-xs text-blue-400 mt-2">
-                          AI 요약 · 논의 {m.summary.주요논의.length}건 · 결정 {m.summary.결정사항.length}건 · 액션 {m.summary.액션아이템.length}건
-                        </p>
+                        <div className="flex gap-1.5 mt-3 flex-wrap">
+                          {(Object.keys(SUMMARY_META) as (keyof MeetingSummary)[])
+                            .filter(k => (m.summary![k] ?? []).length > 0)
+                            .map(k => (
+                              <span key={k} className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${SUMMARY_META[k].bg} ${SUMMARY_META[k].text}`}>
+                                {SUMMARY_META[k].label} {(m.summary![k] ?? []).length}
+                              </span>
+                            ))}
+                        </div>
                       )}
                     </button>
                   ))}
                 </div>
-              )
-            )}
-          </div>
-        )}
-      </main>
+              )}
+            </div>
+          )}
+
+        </main>
+      </div>
     </div>
   );
 }
