@@ -1,7 +1,7 @@
 'use client';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { Meeting, MeetingSummary, TranscriptEntry } from '@/types/meeting';
-import { saveMeeting, getMeetings, deleteMeeting } from '@/lib/storage';
+import { saveMeeting, getMeetings, deleteMeeting, updateMeetingSite, renameSite } from '@/lib/storage';
 import { summarizeMeeting } from '@/lib/gemini';
 import { generateDocx } from '@/lib/docxGenerator';
 
@@ -59,6 +59,8 @@ export default function Home() {
   const [history, setHistory] = useState<Meeting[]>([]);
   const [selected, setSelected] = useState<Meeting | null>(null);
   const [selectedSite, setSelectedSite] = useState<string | null>(null);
+  const [renamingSite, setRenamingSite] = useState<{ old: string; input: string } | null>(null);
+  const [movingSite, setMovingSite] = useState<{ id: string; input: string } | null>(null);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
@@ -287,6 +289,65 @@ export default function Home() {
           </button>
         )}
       </div>
+
+      {/* 현장 이동 (히스토리에서만) */}
+      {!isNew && (
+        <div className="mt-3">
+          {movingSite?.id === m.id ? (
+            <div className="bg-gray-50 rounded-3xl p-4 border border-gray-200">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">다른 현장으로 이동</p>
+              <input
+                list="move-site-list"
+                value={movingSite.input}
+                onChange={e => setMovingSite({ id: m.id, input: e.target.value })}
+                placeholder="현장명 입력 또는 선택"
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && movingSite.input.trim()) {
+                    updateMeetingSite(m.id, movingSite.input.trim());
+                    setHistory(getMeetings());
+                    setMovingSite(null);
+                    setSelected(null);
+                    setSelectedSite(movingSite.input.trim());
+                  }
+                  if (e.key === 'Escape') setMovingSite(null);
+                }}
+                className="w-full bg-white rounded-2xl px-4 py-3 text-gray-900 text-sm outline-none focus:ring-2 focus:ring-indigo-400 border border-gray-200 mb-3"
+                autoFocus
+              />
+              <datalist id="move-site-list">
+                {usedSiteNames.filter(n => n !== m.siteName).map(n => <option key={n} value={n}/>)}
+              </datalist>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    if (movingSite.input.trim()) {
+                      updateMeetingSite(m.id, movingSite.input.trim());
+                      setHistory(getMeetings());
+                      setMovingSite(null);
+                      setSelected(null);
+                      setSelectedSite(movingSite.input.trim());
+                    }
+                  }}
+                  className="flex-1 py-2.5 rounded-2xl bg-indigo-600 text-white text-sm font-bold">
+                  이동
+                </button>
+                <button onClick={() => setMovingSite(null)}
+                  className="flex-1 py-2.5 rounded-2xl bg-gray-200 text-gray-600 text-sm font-bold">
+                  취소
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setMovingSite({ id: m.id, input: m.siteName || '' })}
+              className="w-full py-3 rounded-2xl text-sm text-gray-400 hover:text-indigo-600 border border-dashed border-gray-200 hover:border-indigo-300 transition-all flex items-center justify-center gap-1.5">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/>
+              </svg>
+              다른 현장으로 이동
+            </button>
+          )}
+        </div>
+      )}
     </>
   );
 
@@ -536,24 +597,81 @@ export default function Home() {
                 /* 현장 목록 */
                 <div className="space-y-3">
                   {siteGroups.length > 0 ? siteGroups.map(({ site, meetings, lastDate }) => (
-                    <button key={site} onClick={() => setSelectedSite(site)}
-                      className="w-full bg-white rounded-3xl p-5 text-left shadow-sm border border-gray-100 hover:border-indigo-200 hover:shadow-md active:scale-[0.98] transition-all">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-indigo-50 rounded-2xl flex items-center justify-center shrink-0">
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
-                          </svg>
+                    <div key={site}>
+                      {renamingSite?.old === site ? (
+                        /* 현장명 변경 인라인 폼 */
+                        <div className="bg-white rounded-3xl p-5 shadow-sm border border-indigo-200">
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">현장명 변경</p>
+                          <input
+                            list="rename-site-list"
+                            value={renamingSite.input}
+                            onChange={e => setRenamingSite({ old: site, input: e.target.value })}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && renamingSite.input.trim()) {
+                                renameSite(site, renamingSite.input.trim());
+                                setHistory(getMeetings());
+                                setRenamingSite(null);
+                              }
+                              if (e.key === 'Escape') setRenamingSite(null);
+                            }}
+                            className="w-full bg-gray-50 rounded-2xl px-4 py-3 text-gray-900 text-sm outline-none focus:ring-2 focus:ring-indigo-400 mb-3"
+                            autoFocus
+                          />
+                          <datalist id="rename-site-list">
+                            {usedSiteNames.filter(n => n !== site).map(n => <option key={n} value={n}/>)}
+                          </datalist>
+                          <p className="text-xs text-gray-400 mb-3">다른 현장명 입력 시 해당 현장으로 회의가 통합됩니다.</p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                if (renamingSite.input.trim()) {
+                                  renameSite(site, renamingSite.input.trim());
+                                  setHistory(getMeetings());
+                                  setRenamingSite(null);
+                                }
+                              }}
+                              className="flex-1 py-2.5 rounded-2xl bg-indigo-600 text-white text-sm font-bold">
+                              변경
+                            </button>
+                            <button onClick={() => setRenamingSite(null)}
+                              className="flex-1 py-2.5 rounded-2xl bg-gray-100 text-gray-600 text-sm font-bold">
+                              취소
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-gray-900 text-sm">{site}</p>
-                          <p className="text-xs text-gray-400 mt-0.5 truncate">{lastDate}</p>
+                      ) : (
+                        <div className="bg-white rounded-3xl shadow-sm border border-gray-100 hover:border-indigo-200 hover:shadow-md transition-all overflow-hidden">
+                          <button onClick={() => setSelectedSite(site)} className="w-full p-5 text-left">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 bg-indigo-50 rounded-2xl flex items-center justify-center shrink-0">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+                                </svg>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-bold text-gray-900 text-sm">{site}</p>
+                                <p className="text-xs text-gray-400 mt-0.5 truncate">{lastDate}</p>
+                              </div>
+                              <div className="text-right shrink-0 mr-2">
+                                <p className="text-lg font-bold text-indigo-600">{meetings.length}</p>
+                                <p className="text-xs text-gray-400">건</p>
+                              </div>
+                            </div>
+                          </button>
+                          <div className="border-t border-gray-100 px-5 py-2.5">
+                            <button
+                              onClick={() => setRenamingSite({ old: site, input: site })}
+                              className="text-xs text-gray-400 hover:text-indigo-600 transition-colors flex items-center gap-1">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                              </svg>
+                              현장명 변경 · 통합
+                            </button>
+                          </div>
                         </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-lg font-bold text-indigo-600">{meetings.length}</p>
-                          <p className="text-xs text-gray-400">건</p>
-                        </div>
-                      </div>
-                    </button>
+                      )}
+                    </div>
                   )) : (
                     /* 현장명 없는 구버전 회의록 */
                     <div className="space-y-3">

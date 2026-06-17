@@ -22,3 +22,11 @@ export function getMeetings(): Meeting[] {
 export function deleteMeeting(id: string): void {
   localStorage.setItem(KEY, JSON.stringify(getMeetings().filter(m => m.id !== id)));
 }
+
+export function updateMeetingSite(id: string, siteName: string): void {
+  localStorage.setItem(KEY, JSON.stringify(getMeetings().map(m => m.id === id ? { ...m, siteName } : m)));
+}
+
+export function renameSite(oldName: string, newName: string): void {
+  localStorage.setItem(KEY, JSON.stringify(getMeetings().map(m => m.siteName === oldName ? { ...m, siteName: newName } : m)));
+}
