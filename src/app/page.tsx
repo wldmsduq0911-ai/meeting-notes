@@ -1,6 +1,6 @@
 'use client';
 export const dynamic = 'force-dynamic';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   onAuthStateChanged, signInWithEmailAndPassword,
   createUserWithEmailAndPassword, signOut, type User,
@@ -11,7 +11,7 @@ import {
   updateMeetingSiteCloud, renameSiteCloud,
 } from '@/lib/cloudStorage';
 import type { Meeting, MeetingSummary, TranscriptEntry } from '@/types/meeting';
-import { summarizeMeeting } from '@/lib/gemini';
+import { summarizeMeeting, transcribeAndSummarize } from '@/lib/gemini';
 import { generateDocx } from '@/lib/docxGenerator';
 
 type AppState = 'setup' | 'recording' | 'summarizing' | 'done';
@@ -30,6 +30,12 @@ function fmt(sec: number) {
   const m = String(Math.floor((sec % 3600) / 60)).padStart(2, '0');
   const s = String(sec % 60).padStart(2, '0');
   return `${h}:${m}:${s}`;
+}
+
+function getSupportedAudioMimeType(): string {
+  if (typeof MediaRecorder === 'undefined') return '';
+  const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+  return types.find(t => MediaRecorder.isTypeSupported(t)) ?? '';
 }
 
 function WaveBars({ active }: { active: boolean }) {
@@ -175,7 +181,10 @@ export default function Home() {
   const transcriptRef   = useRef<TranscriptEntry[]>([]);
   const timerValRef     = useRef(0);
   const bottomRef       = useRef<HTMLDivElement>(null);
-  const wakeLockRef     = useRef<WakeLockSentinel | null>(null);
+  const wakeLockRef      = useRef<WakeLockSentinel | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef   = useRef<Blob[]>([]);
+  const audioStreamRef   = useRef<MediaStream | null>(null);
 
   // 인증 상태 감지
   useEffect(() => {
@@ -232,10 +241,37 @@ export default function Home() {
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, []);
 
+  useEffect(() => {
+    return () => { audioStreamRef.current?.getTracks().forEach(t => t.stop()); };
+  }, []);
+
   const refreshHistory = useCallback(async () => {
     if (!user) return;
     setHistory(await getMeetingsCloud(user.uid));
   }, [user]);
+
+  const stopAudioRecording = useCallback((): Promise<Blob | null> => {
+    return new Promise(resolve => {
+      const mr = mediaRecorderRef.current;
+      if (!mr || mr.state === 'inactive') {
+        audioStreamRef.current?.getTracks().forEach(t => t.stop());
+        audioStreamRef.current = null;
+        const chunks = audioChunksRef.current;
+        audioChunksRef.current = [];
+        resolve(chunks.length > 0 ? new Blob(chunks, { type: 'audio/webm' }) : null);
+        return;
+      }
+      mr.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' });
+        audioStreamRef.current?.getTracks().forEach(t => t.stop());
+        audioStreamRef.current = null;
+        mediaRecorderRef.current = null;
+        audioChunksRef.current = [];
+        resolve(blob);
+      };
+      mr.stop();
+    });
+  }, []);
 
   const addParticipant = () => {
     const name = participantInput.trim();
@@ -243,7 +279,7 @@ export default function Home() {
     setParticipantInput('');
   };
 
-  const startMeeting = useCallback(() => {
+  const startMeeting = useCallback(async () => {
     if (!title.trim()) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const w = window as any;
@@ -256,6 +292,20 @@ export default function Home() {
     isRecRef.current = true;
     setState('recording');
     requestWakeLock();
+
+    // Gemini 오디오 전사용 녹음 (Web Speech API와 병렬)
+    audioChunksRef.current = [];
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      const mimeType = getSupportedAudioMimeType();
+      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+      mr.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mr.start(5000);
+      mediaRecorderRef.current = mr;
+    } catch {
+      // MediaRecorder 미지원 또는 권한 거부 → Web Speech 트랜스크립트로 폴백
+    }
 
     timerRef.current = setInterval(() => setTimer(t => t + 1), 1000);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -295,7 +345,7 @@ export default function Home() {
     recognitionRef.current?.stop();
     setInterim('');
     setState('summarizing');
-    const finalTranscript = [...transcriptRef.current];
+    let finalTranscript = [...transcriptRef.current];
     const duration = fmt(timerValRef.current);
     const now = new Date();
     const dateStr = now.toLocaleDateString('ko-KR', {
@@ -303,9 +353,22 @@ export default function Home() {
     }) + ' ' + now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
     let summary: MeetingSummary | null = null;
     const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
-    if (finalTranscript.length > 0 && apiKey) {
-      try { summary = await summarizeMeeting(finalTranscript, participants, apiKey); }
-      catch (e) { console.error('요약 실패:', e); }
+    if (apiKey) {
+      const audioBlob = await stopAudioRecording();
+      const MAX_INLINE = 15 * 1024 * 1024; // 15 MB 이하만 Gemini 인라인 전송
+      if (audioBlob && audioBlob.size > 0 && audioBlob.size < MAX_INLINE) {
+        try {
+          const result = await transcribeAndSummarize(audioBlob, participants, apiKey);
+          if (result.transcript.length > 0) finalTranscript = result.transcript;
+          summary = result.summary;
+        } catch (e) {
+          console.warn('Gemini 오디오 처리 실패, 텍스트 요약으로 대체:', e);
+        }
+      }
+      if (summary === null && finalTranscript.length > 0) {
+        try { summary = await summarizeMeeting(finalTranscript, participants, apiKey); }
+        catch (e) { console.error('요약 실패:', e); }
+      }
     }
     const m: Meeting = {
       id: Date.now().toString(), title: title.trim(), siteName: siteName.trim(),
@@ -316,7 +379,7 @@ export default function Home() {
     setMeeting(m);
     setResultTab('summary');
     setState('done');
-  }, [title, participants, siteName, user, refreshHistory]);
+  }, [title, participants, siteName, user, refreshHistory, stopAudioRecording]);
 
   const downloadWord = async (m: Meeting) => {
     try {
@@ -331,14 +394,23 @@ export default function Home() {
   const resetToSetup = () => {
     setState('setup'); setTitle(''); setSiteName(''); setParticipants([]);
     setTranscript([]); setMeeting(null); setTimer(0);
+    if (mediaRecorderRef.current?.state !== 'inactive') mediaRecorderRef.current?.stop();
+    audioStreamRef.current?.getTracks().forEach(t => t.stop());
+    audioStreamRef.current = null; mediaRecorderRef.current = null; audioChunksRef.current = [];
   };
 
-  const usedSiteNames = [...new Set(history.map(m => m.siteName).filter(Boolean))];
-  const siteGroups = usedSiteNames.map(site => ({
-    site,
-    meetings: history.filter(m => m.siteName === site),
-    lastDate: history.filter(m => m.siteName === site).sort((a, b) => b.createdAt - a.createdAt)[0]?.date ?? '',
-  })).sort((a, b) => b.meetings[0]?.createdAt - a.meetings[0]?.createdAt);
+  const usedSiteNames = useMemo(
+    () => [...new Set(history.map(m => m.siteName).filter(Boolean))],
+    [history]
+  );
+  const siteGroups = useMemo(
+    () => usedSiteNames.map(site => ({
+      site,
+      meetings: history.filter(m => m.siteName === site),
+      lastDate: history.filter(m => m.siteName === site).sort((a, b) => b.createdAt - a.createdAt)[0]?.date ?? '',
+    })).sort((a, b) => b.meetings[0]?.createdAt - a.meetings[0]?.createdAt),
+    [history, usedSiteNames]
+  );
 
   const SummaryView = ({ m }: { m: Meeting }) => (
     <div className="space-y-3">
@@ -446,6 +518,7 @@ export default function Home() {
         ) : (
           <button onClick={async () => {
             if (!user) return;
+            if (!confirm('이 회의록을 삭제할까요?')) return;
             await deleteMeetingCloud(user.uid, m.id);
             await refreshHistory();
             setSelected(null);
@@ -706,7 +779,7 @@ export default function Home() {
                     <div className="absolute inset-0 flex items-center justify-center text-xl">✨</div>
                   </div>
                   <div className="text-center">
-                    <p className="text-gray-900 text-lg font-bold mb-1">AI 요약 생성 중</p>
+                    <p className="text-gray-900 text-lg font-bold mb-1">AI 음성 분석 · 요약 중</p>
                     <p className="text-gray-400 text-sm">잠시만 기다려 주세요</p>
                   </div>
                 </div>
@@ -793,7 +866,7 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {siteGroups.length > 0 ? siteGroups.map(({ site, meetings, lastDate }) => (
+                  {siteGroups.length > 0 ? (<>{siteGroups.map(({ site, meetings, lastDate }) => (
                     <div key={site}>
                       {renamingSite?.old === site ? (
                         <div className="bg-white rounded-3xl p-5 shadow-sm border border-indigo-200">
@@ -868,7 +941,25 @@ export default function Home() {
                         </div>
                       )}
                     </div>
-                  )) : (
+                  ))}
+                  {history.filter(m => !m.siteName).length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest px-1 mb-3">미분류</p>
+                      <div className="space-y-3">
+                        {history.filter(m => !m.siteName).sort((a, b) => b.createdAt - a.createdAt).map(m => (
+                          <button key={m.id} onClick={() => { setSelected(m); setResultTab('summary'); }}
+                            className="w-full bg-white rounded-3xl p-5 text-left shadow-sm border border-gray-100 hover:border-indigo-200 hover:shadow-md active:scale-[0.98] transition-all">
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="font-bold text-gray-900 text-sm leading-tight">{m.title}</p>
+                              <span className="text-xs text-gray-400 font-mono shrink-0 tabular-nums">{m.duration}</span>
+                            </div>
+                            <p className="text-xs text-gray-400 mt-1.5">{m.date}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  </>) : (
                     <div className="space-y-3">
                       {history.map(m => (
                         <button key={m.id} onClick={() => { setSelected(m); setResultTab('summary'); }}

@@ -89,14 +89,22 @@ function numCell(n: number, widthDxa: number): TableCell {
   });
 }
 
-// 액션아이템 파서: "담당자: 할일 → 기한" 형식 → 분리
+// 액션아이템 파서: "[담당자] 할일" (Gemini 출력) 또는 "담당자: 할일 → 기한" 형식 → 분리
 function parseAction(text: string): { task: string; person: string; deadline: string } {
-  const m = text.match(/^([^:：]{1,10})[：:]\s*(.+?)(?:\s*[→>]\s*(.+))?$/);
-  if (m) {
+  const bracket = text.match(/^\[([^\]]+)\]\s*(.+?)(?:\s*[→>]\s*(.+))?$/);
+  if (bracket) {
     return {
-      person: m[1].trim(),
-      task: m[2].replace(/\s*[→>].+$/, '').trim(),
-      deadline: m[3]?.trim() ?? '',
+      person: bracket[1].trim(),
+      task: bracket[2].replace(/\s*[→>].+$/, '').trim(),
+      deadline: bracket[3]?.trim() ?? '',
+    };
+  }
+  const colon = text.match(/^([^:：]{1,10})[：:]\s*(.+?)(?:\s*[→>]\s*(.+))?$/);
+  if (colon) {
+    return {
+      person: colon[1].trim(),
+      task: colon[2].replace(/\s*[→>].+$/, '').trim(),
+      deadline: colon[3]?.trim() ?? '',
     };
   }
   return { task: text, person: '', deadline: '' };
