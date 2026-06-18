@@ -175,6 +175,7 @@ export default function Home() {
   const transcriptRef   = useRef<TranscriptEntry[]>([]);
   const timerValRef     = useRef(0);
   const bottomRef       = useRef<HTMLDivElement>(null);
+  const wakeLockRef     = useRef<WakeLockSentinel | null>(null);
 
   // 인증 상태 감지
   useEffect(() => {
@@ -197,12 +198,26 @@ export default function Home() {
   }, [transcript]);
   useEffect(() => { timerValRef.current = timer; }, [timer]);
 
-  // 앱 백그라운드 → 포그라운드 복귀 시 자동 이어녹음
+  // Wake Lock: 녹음 중 화면 꺼짐 방지
+  const requestWakeLock = async () => {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+      }
+    } catch { /* 미지원 기기 무시 */ }
+  };
+  const releaseWakeLock = () => {
+    wakeLockRef.current?.release().catch(() => {});
+    wakeLockRef.current = null;
+  };
+
+  // 앱 백그라운드 → 포그라운드 복귀 시 자동 이어녹음 + Wake Lock 재요청
   useEffect(() => {
     const handleVisibility = () => {
       if (!isRecRef.current) return;
       if (!document.hidden) {
-        // 화면 복귀 → 음성인식 재시작
+        // 화면 복귀 → Wake Lock 재요청 + 음성인식 재시작
+        requestWakeLock();
         setReconnecting(true);
         try { recognitionRef.current?.stop(); } catch {}
         setTimeout(() => {
@@ -240,6 +255,7 @@ export default function Home() {
     setTranscript([]); setInterim(''); setTimer(0);
     isRecRef.current = true;
     setState('recording');
+    requestWakeLock();
 
     timerRef.current = setInterval(() => setTimer(t => t + 1), 1000);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -274,6 +290,7 @@ export default function Home() {
   const endMeeting = useCallback(async () => {
     if (!user) return;
     isRecRef.current = false;
+    releaseWakeLock();
     if (timerRef.current) clearInterval(timerRef.current);
     recognitionRef.current?.stop();
     setInterim('');
