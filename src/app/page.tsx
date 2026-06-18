@@ -12,8 +12,6 @@ import {
   shareMeeting, getReceivedMeetings, dismissSharedMeeting,
 } from '@/lib/cloudStorage';
 import type { Meeting, MeetingSummary, TranscriptEntry, SharedMeeting } from '@/types/meeting';
-import { summarizeMeeting, transcribeAndSummarize } from '@/lib/gemini';
-import { generateDocx } from '@/lib/docxGenerator';
 
 type AppState = 'setup' | 'recording' | 'summarizing' | 'done';
 type Tab = 'new' | 'history';
@@ -196,17 +194,27 @@ export default function Home() {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
+        // 캐시된 데이터 즉시 표시 → 스피너 없이 바로 화면 전환
+        const cacheKey = `mtg_cache_${u.uid}`;
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          try { setHistory(JSON.parse(cached)); } catch { /* 무시 */ }
+        }
+        setAuthReady(true);
+
+        // Firestore에서 최신 데이터 백그라운드 fetch
         const [meetings, sharedItems] = await Promise.all([
           getMeetingsCloud(u.uid),
           getReceivedMeetings(u.email!),
         ]);
         setHistory(meetings);
         setReceived(sharedItems);
+        localStorage.setItem(cacheKey, JSON.stringify(meetings));
       } else {
         setHistory([]);
         setReceived([]);
+        setAuthReady(true);
       }
-      setAuthReady(true);
     });
     return unsub;
   }, []);
@@ -257,7 +265,9 @@ export default function Home() {
 
   const refreshHistory = useCallback(async () => {
     if (!user) return;
-    setHistory(await getMeetingsCloud(user.uid));
+    const meetings = await getMeetingsCloud(user.uid);
+    setHistory(meetings);
+    localStorage.setItem(`mtg_cache_${user.uid}`, JSON.stringify(meetings));
   }, [user]);
 
   const handleShare = useCallback(async (m: Meeting) => {
@@ -379,6 +389,7 @@ export default function Home() {
       const audioBlob = await stopAudioRecording();
       if (audioBlob && audioBlob.size > 0) {
         try {
+          const { transcribeAndSummarize } = await import('@/lib/gemini');
           const result = await transcribeAndSummarize(audioBlob, participants, apiKey);
           if (result.transcript.length > 0) finalTranscript = result.transcript;
           summary = result.summary;
@@ -387,8 +398,10 @@ export default function Home() {
         }
       }
       if (summary === null && finalTranscript.length > 0) {
-        try { summary = await summarizeMeeting(finalTranscript, participants, apiKey); }
-        catch (e) { console.error('요약 실패:', e); }
+        try {
+          const { summarizeMeeting } = await import('@/lib/gemini');
+          summary = await summarizeMeeting(finalTranscript, participants, apiKey);
+        } catch (e) { console.error('요약 실패:', e); }
       }
     }
     const m: Meeting = {
@@ -404,6 +417,7 @@ export default function Home() {
 
   const downloadWord = async (m: Meeting) => {
     try {
+      const { generateDocx } = await import('@/lib/docxGenerator');
       const blob = await generateDocx(m);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
