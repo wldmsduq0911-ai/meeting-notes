@@ -2,6 +2,8 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; }
+/* iOS Safari 자동 줌인 방지 (font-size < 16px input 터치 시 화면 확대되는 문제) */
+input, textarea, select { font-size: max(16px, 1em) !important; }
 
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
