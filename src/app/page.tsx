@@ -9,8 +9,9 @@ import { auth } from '@/lib/firebase';
 import {
   getMeetingsCloud, saveMeetingCloud, deleteMeetingCloud,
   updateMeetingSiteCloud, renameSiteCloud,
+  shareMeeting, getReceivedMeetings, dismissSharedMeeting,
 } from '@/lib/cloudStorage';
-import type { Meeting, MeetingSummary, TranscriptEntry } from '@/types/meeting';
+import type { Meeting, MeetingSummary, TranscriptEntry, SharedMeeting } from '@/types/meeting';
 import { summarizeMeeting, transcribeAndSummarize } from '@/lib/gemini';
 import { generateDocx } from '@/lib/docxGenerator';
 
@@ -173,6 +174,10 @@ export default function Home() {
   const [renamingSite, setRenamingSite] = useState<{ old: string; input: string } | null>(null);
   const [movingSite, setMovingSite]   = useState<{ id: string; input: string } | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
+  const [received, setReceived] = useState<SharedMeeting[]>([]);
+  const [sharingId, setSharingId] = useState<string | null>(null);
+  const [shareInput, setShareInput] = useState('');
+  const [shareStatus, setShareStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle');
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef  = useRef<any>(null);
@@ -191,10 +196,15 @@ export default function Home() {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
-        const meetings = await getMeetingsCloud(u.uid);
+        const [meetings, sharedItems] = await Promise.all([
+          getMeetingsCloud(u.uid),
+          getReceivedMeetings(u.email!),
+        ]);
         setHistory(meetings);
+        setReceived(sharedItems);
       } else {
         setHistory([]);
+        setReceived([]);
       }
       setAuthReady(true);
     });
@@ -249,6 +259,18 @@ export default function Home() {
     if (!user) return;
     setHistory(await getMeetingsCloud(user.uid));
   }, [user]);
+
+  const handleShare = useCallback(async (m: Meeting) => {
+    if (!user || !shareInput.trim()) return;
+    setShareStatus('sending');
+    try {
+      await shareMeeting(user.email!, shareInput.trim().toLowerCase(), m);
+      setShareStatus('ok');
+      setTimeout(() => { setShareStatus('idle'); setSharingId(null); setShareInput(''); }, 2000);
+    } catch {
+      setShareStatus('error');
+    }
+  }, [user, shareInput]);
 
   const stopAudioRecording = useCallback((): Promise<Blob | null> => {
     return new Promise(resolve => {
@@ -586,6 +608,51 @@ export default function Home() {
           )}
         </div>
       )}
+
+      {/* 공유하기 */}
+      <div className="mt-3">
+        {sharingId === m.id ? (
+          <div className="bg-gray-50 rounded-3xl p-4 border border-gray-200">
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">회의록 공유</p>
+            <p className="text-xs text-gray-400 mb-3">앱에 가입된 이메일로만 전송할 수 있습니다.</p>
+            <input
+              type="email"
+              value={shareInput}
+              onChange={e => setShareInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleShare(m)}
+              placeholder="받을 사람 이메일"
+              className="w-full bg-white rounded-2xl px-4 py-3 text-gray-900 text-sm outline-none focus:ring-2 focus:ring-indigo-400 border border-gray-200 mb-3"
+              autoFocus
+            />
+            {shareStatus === 'ok' && <p className="text-emerald-600 text-xs font-semibold mb-2">✓ 전송했습니다</p>}
+            {shareStatus === 'error' && <p className="text-red-500 text-xs mb-2">전송 실패. 다시 시도해 주세요.</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleShare(m)}
+                disabled={shareStatus === 'sending' || !shareInput.trim()}
+                className="flex-1 py-2.5 rounded-2xl bg-indigo-600 text-white text-sm font-bold disabled:opacity-40">
+                {shareStatus === 'sending' ? '전송 중…' : '전송'}
+              </button>
+              <button
+                onClick={() => { setSharingId(null); setShareInput(''); setShareStatus('idle'); }}
+                className="flex-1 py-2.5 rounded-2xl bg-gray-200 text-gray-600 text-sm font-bold">
+                취소
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => { setSharingId(m.id); setShareInput(''); setShareStatus('idle'); }}
+            className="w-full py-3 rounded-2xl text-sm text-gray-400 hover:text-indigo-600 border border-dashed border-gray-200 hover:border-indigo-300 transition-all flex items-center justify-center gap-1.5">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+              <polyline points="16 6 12 2 8 6"/>
+              <line x1="12" y1="2" x2="12" y2="15"/>
+            </svg>
+            회의록 공유
+          </button>
+        )}
+      </div>
     </>
   );
 
@@ -853,17 +920,56 @@ export default function Home() {
                     ))}
                   </div>
                 </>
-              ) : history.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-32 gap-3">
-                  <div className="w-16 h-16 bg-gray-100 rounded-3xl flex items-center justify-center">
-                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                      <polyline points="14 2 14 8 20 8"/>
-                    </svg>
-                  </div>
-                  <p className="text-gray-400 text-sm">저장된 회의록이 없습니다</p>
-                </div>
               ) : (
+                <>
+                {received.length > 0 && (
+                  <div className="mb-5">
+                    <p className="text-xs font-bold text-indigo-600 uppercase tracking-widest px-1 mb-3">공유받은 회의록</p>
+                    <div className="space-y-3">
+                      {received.map(r => (
+                        <div key={r.shareId} className="bg-indigo-50 rounded-3xl p-5 border border-indigo-200">
+                          <div className="flex items-start justify-between gap-3 mb-1">
+                            <p className="font-bold text-gray-900 text-sm leading-tight">{r.title}</p>
+                            <span className="text-xs text-gray-400 font-mono shrink-0 tabular-nums">{r.duration}</span>
+                          </div>
+                          <p className="text-xs text-indigo-600 font-semibold mb-1">{r.siteName && `${r.siteName} · `}{r.date}</p>
+                          <p className="text-xs text-gray-400 mb-3">{r.fromEmail} 님이 공유</p>
+                          <div className="flex gap-2">
+                            <button onClick={async () => {
+                              if (!user) return;
+                              await saveMeetingCloud(user.uid, { ...r, id: Date.now().toString() });
+                              await dismissSharedMeeting(user.email!, r.shareId);
+                              await refreshHistory();
+                              setReceived(prev => prev.filter(x => x.shareId !== r.shareId));
+                            }}
+                              className="flex-1 py-2 rounded-2xl bg-indigo-600 text-white text-xs font-bold">
+                              내 회의록으로 저장
+                            </button>
+                            <button onClick={async () => {
+                              if (!user) return;
+                              await dismissSharedMeeting(user.email!, r.shareId);
+                              setReceived(prev => prev.filter(x => x.shareId !== r.shareId));
+                            }}
+                              className="py-2 px-4 rounded-2xl bg-white text-gray-500 text-xs font-bold border border-gray-200">
+                              거절
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {history.length === 0 && received.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-32 gap-3">
+                    <div className="w-16 h-16 bg-gray-100 rounded-3xl flex items-center justify-center">
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                      </svg>
+                    </div>
+                    <p className="text-gray-400 text-sm">저장된 회의록이 없습니다</p>
+                  </div>
+                ) : history.length > 0 ? (
                 <div className="space-y-3">
                   {siteGroups.length > 0 ? (<>{siteGroups.map(({ site, meetings, lastDate }) => (
                     <div key={site}>
@@ -973,6 +1079,8 @@ export default function Home() {
                     </div>
                   )}
                 </div>
+                ) : null}
+                </>
               )}
             </div>
           )}

@@ -1,9 +1,9 @@
 import { db } from './firebase';
 import {
   collection, doc, setDoc, getDocs, deleteDoc,
-  query, orderBy, updateDoc, writeBatch,
+  query, orderBy, updateDoc, writeBatch, where,
 } from 'firebase/firestore';
-import type { Meeting } from '@/types/meeting';
+import type { Meeting, SharedMeeting } from '@/types/meeting';
 
 function meetingsRef(uid: string) {
   return collection(db, 'users', uid, 'meetings');
@@ -33,4 +33,29 @@ export async function renameSiteCloud(uid: string, oldName: string, newName: str
     .filter(m => m.siteName === oldName)
     .forEach(m => batch.update(doc(meetingsRef(uid), m.id), { siteName: newName }));
   await batch.commit();
+}
+
+// ── 공유 기능 ──────────────────────────────────────────
+
+function inboxRef(toEmail: string) {
+  return collection(db, 'inboxes', encodeURIComponent(toEmail), 'items');
+}
+
+export async function shareMeeting(fromEmail: string, toEmail: string, meeting: Meeting): Promise<void> {
+  const shareId = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  await setDoc(doc(inboxRef(toEmail.toLowerCase().trim()), shareId), {
+    ...meeting,
+    shareId,
+    fromEmail,
+    sharedAt: Date.now(),
+  });
+}
+
+export async function getReceivedMeetings(toEmail: string): Promise<SharedMeeting[]> {
+  const snap = await getDocs(query(inboxRef(toEmail.toLowerCase().trim()), orderBy('sharedAt', 'desc')));
+  return snap.docs.map(d => d.data() as SharedMeeting);
+}
+
+export async function dismissSharedMeeting(toEmail: string, shareId: string): Promise<void> {
+  await deleteDoc(doc(inboxRef(toEmail.toLowerCase().trim()), shareId));
 }

@@ -21,3 +21,9 @@ export interface Meeting {
   duration: string;
   createdAt: number;
 }
+
+export interface SharedMeeting extends Meeting {
+  shareId: string;
+  fromEmail: string;
+  sharedAt: number;
+}
