@@ -355,8 +355,7 @@ export default function Home() {
     const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
     if (apiKey) {
       const audioBlob = await stopAudioRecording();
-      const MAX_INLINE = 15 * 1024 * 1024; // 15 MB 이하만 Gemini 인라인 전송
-      if (audioBlob && audioBlob.size > 0 && audioBlob.size < MAX_INLINE) {
+      if (audioBlob && audioBlob.size > 0) {
         try {
           const result = await transcribeAndSummarize(audioBlob, participants, apiKey);
           if (result.transcript.length > 0) finalTranscript = result.transcript;
