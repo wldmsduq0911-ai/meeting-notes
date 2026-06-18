@@ -166,6 +166,7 @@ export default function Home() {
   const [selectedSite, setSelectedSite] = useState<string | null>(null);
   const [renamingSite, setRenamingSite] = useState<{ old: string; input: string } | null>(null);
   const [movingSite, setMovingSite]   = useState<{ id: string; input: string } | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef  = useRef<any>(null);
@@ -195,6 +196,26 @@ export default function Home() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [transcript]);
   useEffect(() => { timerValRef.current = timer; }, [timer]);
+
+  // 앱 백그라운드 → 포그라운드 복귀 시 자동 이어녹음
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (!isRecRef.current) return;
+      if (!document.hidden) {
+        // 화면 복귀 → 음성인식 재시작
+        setReconnecting(true);
+        try { recognitionRef.current?.stop(); } catch {}
+        setTimeout(() => {
+          if (isRecRef.current && recognitionRef.current) {
+            try { recognitionRef.current.start(); } catch {}
+          }
+          setReconnecting(false);
+        }, 500);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
 
   const refreshHistory = useCallback(async () => {
     if (!user) return;
@@ -604,12 +625,21 @@ export default function Home() {
                   <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"/>
-                        <span className="text-sm font-bold text-gray-700">녹음 중</span>
+                        {reconnecting ? (
+                          <>
+                            <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"/>
+                            <span className="text-sm font-bold text-amber-600">재연결 중…</span>
+                          </>
+                        ) : (
+                          <>
+                            <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"/>
+                            <span className="text-sm font-bold text-gray-700">녹음 중</span>
+                          </>
+                        )}
                       </div>
                       <span className="font-mono text-2xl font-bold text-gray-900 tabular-nums">{fmt(timer)}</span>
                     </div>
-                    <WaveBars active={true}/>
+                    <WaveBars active={!reconnecting}/>
                     <p className="text-sm font-medium text-gray-400 mt-3 truncate">{title}</p>
                   </div>
 
