@@ -600,7 +600,7 @@ export default function Home() {
               )}
 
               {state === 'recording' && (
-                <div className="pt-2 space-y-3">
+                <div className="pt-2 space-y-3 pb-24">
                   <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
@@ -613,7 +613,7 @@ export default function Home() {
                     <p className="text-sm font-medium text-gray-400 mt-3 truncate">{title}</p>
                   </div>
 
-                  <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 min-h-60 max-h-72 overflow-y-auto">
+                  <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100 overflow-y-auto" style={{ minHeight: 240, maxHeight: 'calc(100vh - 340px)' }}>
                     {transcript.length === 0 && !interim ? (
                       <div className="flex items-center justify-center h-48">
                         <p className="text-gray-400 text-sm">발화를 시작하면 자막이 표시됩니다</p>
@@ -637,10 +637,17 @@ export default function Home() {
                     )}
                   </div>
 
-                  <button onClick={endMeeting}
-                    className="w-full py-4 rounded-3xl font-bold text-base bg-red-500 hover:bg-red-600 active:scale-[0.98] text-white shadow-lg shadow-red-100 transition-all">
-                    회의 종료
-                  </button>
+                  {/* 회의 종료 버튼 — 항상 화면 하단 고정 */}
+                  <div className="fixed bottom-0 left-0 right-0 px-5 pb-6 pt-3 bg-gradient-to-t from-gray-50 via-gray-50 to-transparent">
+                    <div className="max-w-lg mx-auto">
+                      <button
+                        onClick={endMeeting}
+                        className="w-full py-5 rounded-3xl font-bold text-base bg-red-500 active:bg-red-600 text-white shadow-xl shadow-red-200"
+                        style={{ touchAction: 'manipulation' }}>
+                        회의 종료
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
