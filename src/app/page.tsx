@@ -153,7 +153,11 @@ function AuthScreen() {
 // ── 메인 앱 ────────────────────────────────────────────────
 export default function Home() {
   const [user, setUser]               = useState<User | null>(null);
-  const [authReady, setAuthReady]     = useState(false);
+  // lazy initializer: 첫 렌더 시 localStorage를 동기적으로 읽어 스피너 없이 즉시 표시
+  const [authReady, setAuthReady]     = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return !!localStorage.getItem('mtg_last_uid');
+  });
 
   const [tab, setTab]                 = useState<Tab>('new');
   const [state, setState]             = useState<AppState>('setup');
@@ -166,7 +170,15 @@ export default function Home() {
   const [timer, setTimer]             = useState(0);
   const [meeting, setMeeting]         = useState<Meeting | null>(null);
   const [resultTab, setResultTab]     = useState<'summary' | 'full'>('summary');
-  const [history, setHistory]         = useState<Meeting[]>([]);
+  const [history, setHistory]         = useState<Meeting[]>(() => {
+    if (typeof window === 'undefined') return [];
+    const lastUid = localStorage.getItem('mtg_last_uid');
+    if (!lastUid) return [];
+    try {
+      const cached = localStorage.getItem(`mtg_cache_${lastUid}`);
+      return cached ? JSON.parse(cached) : [];
+    } catch { return []; }
+  });
   const [selected, setSelected]       = useState<Meeting | null>(null);
   const [selectedSite, setSelectedSite] = useState<string | null>(null);
   const [renamingSite, setRenamingSite] = useState<{ old: string; input: string } | null>(null);
@@ -194,23 +206,20 @@ export default function Home() {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
-        // 캐시된 데이터 즉시 표시 → 스피너 없이 바로 화면 전환
-        const cacheKey = `mtg_cache_${u.uid}`;
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          try { setHistory(JSON.parse(cached)); } catch { /* 무시 */ }
-        }
+        // uid 저장 → 다음 진입 시 lazy initializer가 즉시 읽음
+        localStorage.setItem('mtg_last_uid', u.uid);
         setAuthReady(true);
 
-        // Firestore에서 최신 데이터 백그라운드 fetch
+        // Firestore 최신 데이터 백그라운드 fetch (화면은 이미 표시 중)
         const [meetings, sharedItems] = await Promise.all([
           getMeetingsCloud(u.uid),
           getReceivedMeetings(u.email!),
         ]);
         setHistory(meetings);
         setReceived(sharedItems);
-        localStorage.setItem(cacheKey, JSON.stringify(meetings));
+        localStorage.setItem(`mtg_cache_${u.uid}`, JSON.stringify(meetings));
       } else {
+        localStorage.removeItem('mtg_last_uid');
         setHistory([]);
         setReceived([]);
         setAuthReady(true);
