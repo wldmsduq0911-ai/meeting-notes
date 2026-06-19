@@ -288,6 +288,7 @@ export default function Home() {
       setTimeout(() => { setShareStatus('idle'); setSharingId(null); setShareInput(''); }, 2000);
     } catch {
       setShareStatus('error');
+      setTimeout(() => setShareStatus('idle'), 3000);
     }
   }, [user, shareInput]);
 
@@ -337,7 +338,13 @@ export default function Home() {
     // Gemini 오디오 전사용 녹음 (Web Speech API와 병렬)
     audioChunksRef.current = [];
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,  // 에코 제거 끔 → 원음 보존
+          noiseSuppression: false,  // 노이즈 억제 끔 → 원거리 목소리 차단 방지
+          autoGainControl: true,    // 자동 게인 → 작은 소리 자동 증폭
+        },
+      });
       audioStreamRef.current = stream;
       const mimeType = getSupportedAudioMimeType();
       const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {});
@@ -430,7 +437,8 @@ export default function Home() {
       const blob = await generateDocx(m);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = `${m.title}_${m.date}.docx`; a.click();
+      const safeName = `${m.title}_${m.date}`.replace(/[\\/:*?"<>|]/g, '_');
+      a.href = url; a.download = `${safeName}.docx`; a.click();
       URL.revokeObjectURL(url);
     } catch { alert('Word 파일 생성 중 오류가 발생했습니다.'); }
   };
@@ -792,6 +800,16 @@ export default function Home() {
                     </div>
                   </div>
 
+                  <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-100 rounded-2xl px-4 py-3">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5">
+                      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    <p className="text-xs text-blue-700 leading-relaxed">
+                      <span className="font-bold">핸드폰을 테이블 중앙</span>에 놓아두세요.<br/>
+                      회의 종료 후 AI가 전체 녹음을 분석해 요약합니다.
+                    </p>
+                  </div>
+
                   <button onClick={startMeeting} disabled={!title.trim()}
                     className="w-full py-4 rounded-3xl font-bold text-base bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed transition-all text-white shadow-lg shadow-indigo-200">
                     회의 시작
@@ -960,7 +978,8 @@ export default function Home() {
                           <div className="flex gap-2">
                             <button onClick={async () => {
                               if (!user) return;
-                              await saveMeetingCloud(user.uid, { ...r, id: Date.now().toString() });
+                              const { shareId: _sid, fromEmail: _fe, sharedAt: _sa, ...rest } = r;
+                              await saveMeetingCloud(user.uid, { ...rest, id: Date.now().toString() });
                               await dismissSharedMeeting(user.email!, r.shareId);
                               await refreshHistory();
                               setReceived(prev => prev.filter(x => x.shareId !== r.shareId));

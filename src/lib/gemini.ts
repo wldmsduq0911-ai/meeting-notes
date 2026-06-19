@@ -20,6 +20,13 @@ async function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+// Gemini Files API 파일 삭제 (fileUri = 업로드 응답의 data.file.uri)
+async function deleteGeminiFile(fileUri: string, apiKey: string): Promise<void> {
+  try {
+    await fetch(`${fileUri}?key=${encodeURIComponent(apiKey)}`, { method: 'DELETE' });
+  } catch { /* 삭제 실패는 무시 — 48시간 후 자동 삭제됨 */ }
+}
+
 // Gemini Files API로 오디오 업로드 → fileUri 반환
 async function uploadAudioFile(audioBlob: Blob, apiKey: string): Promise<string> {
   const mimeType = audioBlob.type || 'audio/webm';
@@ -67,7 +74,7 @@ export async function summarizeMeeting(
   apiKey: string,
 ): Promise<MeetingSummary> {
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
   const text = transcript.map(e => `[${e.time}] ${e.text}`).join('\n');
 
@@ -100,12 +107,17 @@ export async function transcribeAndSummarize(
   apiKey: string,
 ): Promise<{ transcript: TranscriptEntry[]; summary: MeetingSummary }> {
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const mimeType = audioBlob.type || 'audio/webm';
 
-  const audioPart = audioBlob.size < INLINE_LIMIT
-    ? { inlineData: { mimeType, data: await blobToBase64(audioBlob) } }
-    : { fileData: { mimeType, fileUri: await uploadAudioFile(audioBlob, apiKey) } };
+  let uploadedFileUri: string | null = null;
+  let audioPart: object;
+  if (audioBlob.size < INLINE_LIMIT) {
+    audioPart = { inlineData: { mimeType, data: await blobToBase64(audioBlob) } };
+  } else {
+    uploadedFileUri = await uploadAudioFile(audioBlob, apiKey);
+    audioPart = { fileData: { mimeType, fileUri: uploadedFileUri } };
+  }
 
   const prompt = `${DOMAIN_HINT}
 참석자: ${participants.length > 0 ? participants.join(', ') : '미입력'}
@@ -124,6 +136,8 @@ ${JSON_RULES}
 
   const result = await model.generateContent([audioPart, prompt]);
   const raw = result.response.text();
+  if (uploadedFileUri) deleteGeminiFile(uploadedFileUri, apiKey);
+
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) throw new Error('Invalid Gemini audio response');
 
