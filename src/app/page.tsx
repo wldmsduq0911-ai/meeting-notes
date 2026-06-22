@@ -410,14 +410,16 @@ export default function Home() {
           if (result.transcript.length > 0) finalTranscript = result.transcript;
           summary = result.summary;
         } catch (e) {
-          console.warn('Gemini 오디오 처리 실패, 텍스트 요약으로 대체:', e);
+          console.warn('[Gemini] 오디오 전사 실패 → 텍스트 요약으로 대체:', (e as Error).message);
         }
       }
       if (summary === null && finalTranscript.length > 0) {
         try {
           const { summarizeMeeting } = await import('@/lib/gemini');
           summary = await summarizeMeeting(finalTranscript, participants, apiKey);
-        } catch (e) { console.error('요약 실패:', e); }
+        } catch (e) {
+          console.error('[Gemini] 텍스트 요약도 실패:', (e as Error).message);
+        }
       }
     }
     const m: Meeting = {
